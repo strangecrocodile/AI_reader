@@ -1,3 +1,39 @@
+# ---- 依赖 ----
+node_modules/
+
+# ---- 构建产物 ----
+dist/
+dist-ssr/
+*.local
+
+# ---- 日志 ----
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- 编辑器/IDE ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ---- 操作系统 ----
 .DS_Store
-frontend\dist
-frontend\node_modules
+Thumbs.db
+
+# ---- 环境变量 ----
+.env
+.env.*
+!.env.example
+
+# ---- 缓存 ----
+.vite/
+.temp/
+*.tsbuildinfo
