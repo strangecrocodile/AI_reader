@@ -37,3 +37,4 @@ Thumbs.db
 .vite/
 .temp/
 *.tsbuildinfo
+.npm-cache/
