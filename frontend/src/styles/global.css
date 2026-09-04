@@ -1,0 +1,190 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Serif+SC:wght@500;600;700&family=Source+Han+Sans+SC:wght@400;500;600;700&display=swap');
+
+:root {
+  --ink: #1d2d27;
+  --paper: #f7f4ed;
+  --card: #fffdf8;
+  --line: #ded9cd;
+  --muted: #68736d;
+  --green: #146b50;
+  --lime: #d9ef8a;
+  --orange: #ed6d39;
+  --soft: #eef3e9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #e6e7df;
+  color: var(--ink);
+  font-family: 'Source Han Sans SC', 'Microsoft YaHei', sans-serif;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app {
+  min-height: 100vh;
+  max-width: 1600px;
+  margin: auto;
+  background: var(--paper);
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding: 0 40px;
+  background: rgba(255, 253, 248, 0.82);
+  backdrop-filter: blur(16px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.mark {
+  width: 30px;
+  height: 34px;
+  background: var(--green);
+  border-radius: 3px 3px 12px 12px;
+  position: relative;
+}
+
+.mark:after {
+  content: 'A';
+  color: var(--lime);
+  font-family: Georgia;
+  font-size: 20px;
+  position: absolute;
+  left: 7px;
+  top: 4px;
+}
+
+.top-nav {
+  display: flex;
+  gap: 24px;
+  font-size: 14px;
+}
+
+.nav-link {
+  color: var(--muted);
+  text-decoration: none;
+  cursor: default;
+}
+
+.nav-link.active {
+  color: var(--green);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #c9d9d0;
+  display: grid;
+  place-items: center;
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* ---------- 页面容器 ---------- */
+.page {
+  display: none;
+  padding: 44px 48px 56px;
+  animation: appear 0.35s ease;
+}
+
+.page.active {
+  display: block;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.eyebrow {
+  color: var(--green);
+  font: 500 12px 'DM Mono', monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  font: 700 clamp(30px, 4vw, 52px) 'Noto Serif SC', serif;
+  margin: 10px 0;
+  letter-spacing: -0.04em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+h2 {
+  font: 700 24px 'Noto Serif SC', serif;
+  margin: 0;
+}
+
+h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.sub {
+  color: var(--muted);
+  line-height: 1.8;
+  margin: 0;
+}
+
+.loading-note {
+  text-align: center;
+  color: var(--muted);
+  padding: 120px 0;
+  font-size: 15px;
+}
+
+/* ---------- 全局提示 ---------- */
+.notice {
+  position: fixed;
+  right: 26px;
+  bottom: 25px;
+  background: var(--ink);
+  color: white;
+  padding: 13px 17px;
+  display: none;
+  z-index: 100;
+  box-shadow: 4px 4px 0 var(--lime);
+}
+
+.notice.show {
+  display: block;
+  animation: appear 0.3s;
+}

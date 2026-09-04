@@ -1,0 +1,329 @@
+/* ---------- 主页网格 ---------- */
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(410px, 1fr) 1.15fr;
+  gap: 26px;
+  max-width: 1420px;
+  margin: auto;
+}
+
+/* ---------- 教材封面 ---------- */
+.book-stage {
+  min-height: 570px;
+  padding: 34px;
+  background: #d5dfd0;
+  border: 1px solid #c2cec1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.book-stage:before,
+.book-stage:after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(2px);
+  opacity: 0.45;
+}
+
+.book-stage:before {
+  width: 350px;
+  height: 350px;
+  background: #b4c7a3;
+  right: -130px;
+  top: -100px;
+}
+
+.book-stage:after {
+  width: 240px;
+  height: 240px;
+  background: #f4d9a0;
+  left: -100px;
+  bottom: -100px;
+}
+
+.book-stage > * {
+  position: relative;
+  z-index: 1;
+}
+
+.book-meta {
+  display: flex;
+  justify-content: space-between;
+  color: #496057;
+  font-size: 13px;
+}
+
+.book-object {
+  align-self: center;
+  width: 265px;
+  height: 360px;
+  background: #f5f0e3;
+  box-shadow: 14px 18px 0 rgba(29, 45, 39, 0.12), 0 24px 30px rgba(29, 45, 39, 0.18);
+  padding: 25px;
+  border-left: 11px solid #2c5c4c;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transform: rotate(-3deg);
+}
+
+.book-object .tiny {
+  font: 500 11px 'DM Mono';
+  letter-spacing: 0.12em;
+  color: #65746a;
+}
+
+.book-title {
+  font: 700 31px 'Noto Serif SC';
+  line-height: 1.25;
+}
+
+.formula {
+  font: 26px Georgia;
+  color: #2f5144;
+  border-top: 1px solid #b4c4b6;
+  padding-top: 19px;
+}
+
+.switch-book {
+  border: 0;
+  background: var(--ink);
+  color: white;
+  padding: 13px 16px;
+  font-weight: 600;
+  align-self: flex-start;
+}
+
+/* ---------- 学习计划面板 ---------- */
+.plan-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 32px;
+}
+
+.plan-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 20px;
+}
+
+.book-tag {
+  background: var(--soft);
+  color: var(--green);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.goal-card {
+  margin: 28px 0 22px;
+  padding: 19px 20px;
+  background: var(--green);
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.goal-card:after {
+  content: '';
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  right: -48px;
+  bottom: -77px;
+}
+
+.goal-card p {
+  margin: 7px 0 0;
+  color: #d2e4d7;
+  font-size: 14px;
+}
+
+.goal-label {
+  font: 500 11px 'DM Mono';
+  letter-spacing: 0.11em;
+  color: var(--lime);
+}
+
+.start-btn {
+  width: 100%;
+  border: 0;
+  background: var(--orange);
+  color: white;
+  padding: 16px;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 24px;
+  box-shadow: 4px 4px 0 #be532c;
+}
+
+.section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 13px;
+}
+
+.section-title button {
+  border: 0;
+  background: none;
+  color: var(--green);
+  font-size: 13px;
+}
+
+/* ---------- 章节目录 ---------- */
+.chapter {
+  border-top: 1px solid var(--line);
+  padding: 15px 0;
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  width: 100%;
+  background: none;
+  text-align: left;
+  color: inherit;
+  transition: color 0.2s;
+}
+
+.chapter:hover {
+  color: var(--green);
+}
+
+.chapter-num {
+  font: 500 12px 'DM Mono';
+  color: var(--muted);
+}
+
+.chapter-main {
+  flex: 1;
+}
+
+.chapter-main small {
+  color: var(--muted);
+}
+
+.progress {
+  height: 5px;
+  background: #e6e5dd;
+  margin-top: 7px;
+  display: block;
+}
+
+.progress i {
+  height: 100%;
+  background: var(--green);
+  display: block;
+}
+
+.chapter-state {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.today {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.today:before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--orange);
+  border-radius: 50%;
+}
+
+/* ---------- 更换教材弹窗 ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 32, 26, 0.4);
+  display: none;
+  place-items: center;
+  z-index: 50;
+  padding: 20px;
+}
+
+.modal.open {
+  display: grid;
+}
+
+.modal-card {
+  background: var(--card);
+  width: min(620px, 100%);
+  padding: 30px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.2);
+  position: relative;
+}
+
+.close {
+  position: absolute;
+  right: 20px;
+  top: 17px;
+  border: 0;
+  background: none;
+  font-size: 22px;
+}
+
+.book-choices {
+  margin-top: 22px;
+  display: grid;
+  gap: 10px;
+}
+
+.book-choice {
+  background: white;
+  border: 1px solid var(--line);
+  padding: 16px;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.book-choice:hover {
+  border-color: var(--green);
+}
+
+.upload {
+  border: 1px dashed var(--green);
+  padding: 18px;
+  color: var(--green);
+  background: #f4f8f0;
+  text-align: center;
+  margin-top: 10px;
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 900px) {
+  .page {
+    padding: 26px 18px;
+  }
+
+  .home-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .book-stage {
+    min-height: 430px;
+  }
+
+  .topbar {
+    padding: 0 18px;
+  }
+
+  .top-nav {
+    display: none;
+  }
+}
