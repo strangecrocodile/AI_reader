@@ -38,3 +38,11 @@ Thumbs.db
 .temp/
 *.tsbuildinfo
 .npm-cache/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/.venv/
+backend/.pip-cache/
+backend/data/
