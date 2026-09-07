@@ -21,7 +21,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe scripts\make_demo_pdf.py        # 生成原创示例教材（可选）
-.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8001
 ```
 
 ### 2. 启动前端（端口 3000）
@@ -29,7 +29,7 @@ python -m venv .venv
 ```powershell
 cd frontend
 npm install
-$env:VITE_API_BASE_URL='http://localhost:8000'   # 接入真实后端
+$env:VITE_API_BASE_URL='http://localhost:8001'   # 接入真实后端
 npm run dev
 ```
 
