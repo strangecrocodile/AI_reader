@@ -14,6 +14,9 @@ AI_reader/
 
 ## 运行方式
 
+conda deactivate
+conda config --set auto_activate_base false
+conda activate
 ### 1. 启动后端（端口 8000）
 
 ```powershell
@@ -21,7 +24,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe scripts\make_demo_pdf.py        # 生成原创示例教材（可选）
-.venv\Scripts\python.exe -m uvicorn app.main:app --port 8001
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
 ```
 
 ### 2. 启动前端（端口 3000）
