@@ -1,0 +1,11 @@
+# 基础（P0/P1）
+python-docx>=1.1.0
+pytest>=8.0.0
+
+# 知识库与 Agent（P2/P3）
+langchain-core>=0.3
+langchain-text-splitters>=0.3
+
+# 可选：接真实向量库/模型时按需启用
+# chromadb>=0.5
+# langchain-community>=0.3

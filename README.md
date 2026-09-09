@@ -9,7 +9,8 @@ AI 讲解与溯源问答。回答以指定教材为边界，每条回答都可�
 AI_reader/
 ├── docs/           # 赛题要求、产品设计、后端设计文档
 ├── frontend/       # React + Vite 前端（主页/学习页/划词问答）
-└── backend/        # FastAPI 后端（PDF 解析 / RAG 检索 / 溯源问答）
+├── backend/        # FastAPI 后端（PDF 解析 / RAG 检索 / 溯源问答）
+└── tools/kb-agent/ # 教材入库 Agent 原型（docx/txt → 章节 Word + RAG 知识库）
 ```
 
 ## 运行方式
