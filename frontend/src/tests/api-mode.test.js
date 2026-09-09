@@ -21,6 +21,24 @@ describe('api 后端模式（REST）', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://backend.test/api/books', expect.anything());
   });
 
+  it('uploadBook 以 multipart 提交 PDF', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ id: 'b2', title: '新教材', chapters: [] }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const file = new File(['%PDF-demo'], 'new.pdf', { type: 'application/pdf' });
+
+    await expect(api.uploadBook(file)).resolves.toMatchObject({ id: 'b2' });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://backend.test/api/books');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.body.get('file')).toBe(file);
+  });
+
   it('fetchStudyContent 失败时回退 null（章节不存在）', async () => {
     configureApiBase('http://backend.test');
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));

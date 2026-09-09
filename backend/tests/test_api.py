@@ -25,6 +25,36 @@ def test_upload_and_list_books(client, demo_pdf_bytes):
     assert any(b["id"] == book["id"] for b in books)
 
 
+def test_upload_rejects_non_pdf(client):
+    resp = client.post(
+        "/api/books",
+        files={"file": ("notes.txt", b"plain text", "text/plain")},
+    )
+    assert resp.status_code == 415
+
+
+def test_upload_rejects_empty_file(client):
+    resp = client.post(
+        "/api/books",
+        files={"file": ("empty.pdf", b"", "application/pdf")},
+    )
+    assert resp.status_code == 400
+
+
+def test_uploading_two_books_keeps_both_books_readable(client, demo_pdf_bytes):
+    first = _upload(client, demo_pdf_bytes)
+    second = _upload(client, demo_pdf_bytes)
+
+    assert first["id"] != second["id"]
+    assert first["chapters"][0]["id"] != second["chapters"][0]["id"]
+    assert client.get(
+        f"/api/books/{first['id']}/chapters/{first['chapters'][0]['id']}"
+    ).status_code == 200
+    assert client.get(
+        f"/api/books/{second['id']}/chapters/{second['chapters'][0]['id']}"
+    ).status_code == 200
+
+
 def test_chapter_content_with_lesson(client, demo_pdf_bytes):
     book = _upload(client, demo_pdf_bytes)
     for ch in book["chapters"]:

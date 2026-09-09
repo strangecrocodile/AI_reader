@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api.js';
 
 const CURRENT_BOOK_KEY = 'ai_reader.currentBookId';
@@ -12,17 +12,24 @@ export function BookProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [currentBookId, setCurrentBookIdState] = useState(() => localStorage.getItem(CURRENT_BOOK_KEY));
 
+  const refreshBooks = useCallback(async () => {
+    const list = await api.fetchBooks();
+    setBooks(list);
+    setLoading(false);
+    return list;
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    api.fetchBooks().then((list) => {
+    refreshBooks().then(() => {
       if (cancelled) return;
-      setBooks(list);
-      setLoading(false);
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshBooks]);
 
   const setCurrentBookId = (id) => {
     setCurrentBookIdState(id);
@@ -31,8 +38,8 @@ export function BookProvider({ children }) {
 
   const value = useMemo(() => {
     const validId = books?.some((b) => b.id === currentBookId) ? currentBookId : books?.[0]?.id ?? null;
-    return { books, loading, currentBookId: validId, setCurrentBookId };
-  }, [books, currentBookId]);
+    return { books, loading, currentBookId: validId, setCurrentBookId, refreshBooks };
+  }, [books, currentBookId, loading, refreshBooks]);
 
   return <BookContext.Provider value={value}>{children}</BookContext.Provider>;
 }

@@ -44,12 +44,15 @@ async def upload_book(
 ):
     """上传文本型 PDF 教材：解析目录/章节/段落并入库。"""
     db, llm, retrieval, _ = _state(request)
+    filename = file.filename or ""
+    if not filename.lower().endswith(".pdf") and file.content_type != "application/pdf":
+        raise HTTPException(status_code=415, detail="目前只支持上传 PDF 文件")
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="文件为空")
     try:
-        info = ingest_pdf_bytes(db, data, default_title=title or file.filename or "未命名教材")
-    except (ValueError, Exception) as e:  # noqa: BLE001
+        info = ingest_pdf_bytes(db, data, default_title=title or filename or "未命名教材")
+    except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"解析失败：{e}") from e
     retrieval.invalidate_book(info["id"])
     book = db.get_book(info["id"])

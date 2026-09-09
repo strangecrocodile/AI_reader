@@ -44,6 +44,28 @@ export const api = {
     return books.map((b) => withLocalProgress(b));
   },
 
+  /** 上传文本型 PDF，后端解析目录、段落与锚点后返回教材元信息。 */
+  async uploadBook(file, title = '') {
+    if (!useBackend()) {
+      throw new Error('演示模式不支持真实 PDF 上传，请先连接 FastAPI 后端');
+    }
+    const form = new FormData();
+    form.append('file', file);
+    if (title.trim()) form.append('title', title.trim());
+    const res = await fetch(`${apiBase}/api/books`, { method: 'POST', body: form });
+    if (!res.ok) {
+      let detail = `上传失败（${res.status}）`;
+      try {
+        const data = await res.json();
+        if (data.detail) detail = data.detail;
+      } catch {
+        // 保留通用错误文案
+      }
+      throw new Error(detail);
+    }
+    return res.json();
+  },
+
   /** 获取单本教材；不存在返回 null。 */
   async fetchBook(bookId) {
     if (useBackend()) {

@@ -1,10 +1,14 @@
+import { useRef, useState } from 'react';
 import { useBooks } from '../state/BookContext.jsx';
 import { useToast } from '../state/ToastContext.jsx';
+import { api } from '../services/api.js';
 
-/** 更换教材弹窗：可切换到其他教材；「上传新教材」为演示占位。 */
+/** 更换教材弹窗：可切换已有教材，也可上传文本型 PDF。 */
 export default function BookModal({ open, onClose }) {
-  const { books, currentBookId, setCurrentBookId } = useBooks();
+  const { books, currentBookId, setCurrentBookId, refreshBooks } = useBooks();
   const toast = useToast();
+  const inputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
 
   if (!open) return null;
 
@@ -15,6 +19,29 @@ export default function BookModal({ open, onClose }) {
       toast(`已切换为《${name}》`);
     }
     onClose();
+  };
+
+  const upload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      toast('目前只支持上传 PDF 文件');
+      return;
+    }
+    setUploading(true);
+    try {
+      const uploaded = await api.uploadBook(file);
+      const list = await refreshBooks();
+      const imported = list.find((book) => book.id === uploaded.id) ?? uploaded;
+      setCurrentBookId(imported.id);
+      toast(`《${imported.title}》已上传并识别 ${imported.chapters.length} 个章节`);
+      onClose();
+    } catch (error) {
+      toast(error.message || 'PDF 上传失败');
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -40,9 +67,17 @@ export default function BookModal({ open, onClose }) {
               <span>{book.id === currentBookId ? '当前' : '→'}</span>
             </button>
           ))}
-          <div className="upload" onClick={() => toast('演示模式：已模拟上传并识别目录')} role="button" tabIndex={0}>
-            ＋ 上传新教材（PDF / EPUB）
-          </div>
+          <input
+            ref={inputRef}
+            className="upload-input"
+            type="file"
+            accept=".pdf,application/pdf"
+            onChange={upload}
+            aria-label="选择 PDF 教材"
+          />
+          <button className="upload" type="button" onClick={() => inputRef.current?.click()} disabled={uploading}>
+            {uploading ? '正在上传并识别目录…' : '＋ 上传新教材（PDF）'}
+          </button>
         </div>
       </div>
     </div>

@@ -29,7 +29,7 @@ def ingest_pdf_bytes(db: Database, file_bytes: bytes, default_title: str = "æœªå
     section_rows = []
     anchor_rows = []
     for ch in parsed.chapters:
-        cid = f"ch{ch.num}"
+        cid = f"{book_id}-ch{ch.num}"
         chapter_rows.append(
             {
                 "id": cid,
@@ -42,7 +42,7 @@ def ingest_pdf_bytes(db: Database, file_bytes: bytes, default_title: str = "æœªå
             }
         )
         for sec in ch.sections:
-            sid = f"s{ch.num}-{sec.seq}"
+            sid = f"{book_id}-s{ch.num}-{sec.seq}"
             section_rows.append(
                 {
                     "id": sid,
