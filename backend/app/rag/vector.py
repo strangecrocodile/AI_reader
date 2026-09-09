@@ -45,13 +45,18 @@ class VectorIndex:
         for doc_id, vec in zip(doc_ids, self._embed(texts)):
             self._vectors[doc_id] = vec
 
-    def search(self, query: str, k: int = 5) -> List[tuple]:
+    def search(self, query: str, k: int = 5, allowed_ids=None) -> List[tuple]:
         if not self._vectors:
             return []
         try:
             [qvec] = self._embed([query])
         except Exception:
             return []
-        scored = [(doc_id, _cosine(qvec, vec)) for doc_id, vec in self._vectors.items()]
+        allowed = set(allowed_ids) if allowed_ids is not None else None
+        scored = [
+            (doc_id, _cosine(qvec, vec))
+            for doc_id, vec in self._vectors.items()
+            if allowed is None or doc_id in allowed
+        ]
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:k]

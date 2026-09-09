@@ -85,8 +85,12 @@ export function Chat({ chat, asking, onFocusSource }) {
             {msg.sources?.length > 0 && (
               <div className="answer-sources">
                 {msg.sources.map((sid) => (
-                  <button key={sid} className="source-chip" onClick={() => onFocusSource(sid)}>
-                    教材依据 {sid.replace('source-', '#')} ↖
+                  <button
+                    key={sid}
+                    className="source-chip"
+                    onClick={() => onFocusSource(sid)}
+                  >
+                    {sourceLabel(sid, msg.sourceDetails)} ↖
                   </button>
                 ))}
               </div>
@@ -103,6 +107,12 @@ export function Chat({ chat, asking, onFocusSource }) {
       )}
     </div>
   );
+}
+
+function sourceLabel(sourceId, details = []) {
+  const detail = details.find((item) => item.id === sourceId);
+  if (detail?.page) return `教材依据 · 第 ${detail.page} 页`;
+  return `教材依据 ${sourceId.replace('source-', '#')}`;
 }
 
 /** 提问框：显示已选中原文，支持回车提问。 */

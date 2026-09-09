@@ -71,7 +71,10 @@ export default function StudyPage() {
       setChat((prev) => [...prev, { role: 'user', text: question, context: ctx }]);
       setAsking(true);
       const res = await api.ask({ question, selectedText: selected?.text, bookId, chapterId });
-      setChat((prev) => [...prev, { role: 'assistant', text: res.text, sources: res.sources }]);
+      setChat((prev) => [
+        ...prev,
+        { role: 'assistant', text: res.text, sources: res.sources, sourceDetails: res.sourceDetails },
+      ]);
       try {
         await api.markChapterProgress({ bookId, chapterId, status: 'learning', mastery: 42 });
       } catch {

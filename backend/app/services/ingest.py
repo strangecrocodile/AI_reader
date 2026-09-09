@@ -13,17 +13,14 @@ def ingest_pdf_bytes(db: Database, file_bytes: bytes, default_title: str = "未�
         raise ValueError("未能从 PDF 中识别出章节内容")
 
     book_id = uuid.uuid4().hex[:8]
-    db.delete_book(book_id)  # 防止残留
-    db.add_book(
-        {
-            "id": book_id,
-            "title": parsed.title or default_title,
-            "author": "",
-            "note": "教材导入时间见数据库",
-            "progress_pct": 0.0,
-            "created_at": _now(),
-        }
-    )
+    book_row = {
+        "id": book_id,
+        "title": parsed.title or default_title,
+        "author": "",
+        "note": "教材导入时间见数据库",
+        "progress_pct": 0.0,
+        "created_at": _now(),
+    }
 
     chapter_rows = []
     section_rows = []
@@ -65,9 +62,7 @@ def ingest_pdf_bytes(db: Database, file_bytes: bytes, default_title: str = "未�
                 }
             )
 
-    db.add_chapters(chapter_rows)
-    db.add_sections(section_rows)
-    db.add_anchors(anchor_rows)
+    db.add_book_bundle(book_row, chapter_rows, section_rows, anchor_rows)
     return {"id": book_id, "title": parsed.title, "chapters": chapter_rows}
 
 

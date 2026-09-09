@@ -84,7 +84,7 @@ describe('api 后端模式（REST）', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await api.ask({ question: '导数是什么？', bookId: 'b1', chapterId: 'ch2', selectedText: '' });
-    expect(res).toEqual({ text: '导数即变化率。', sources: ['s2-1'] });
+    expect(res).toEqual({ text: '导数即变化率。', sources: ['s2-1'], sourceDetails: [] });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://backend.test/api/ask');
     expect(init.method).toBe('POST');

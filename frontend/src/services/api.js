@@ -141,7 +141,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ question, bookId, chapterId, selectedText: selectedText || null }),
       });
-      return { text: data.answer, sources: data.sources };
+      return { text: data.answer, sources: data.sources, sourceDetails: data.sourceDetails || [] };
     }
     await delay(350); // 模拟模型推理耗时
     return answerFor(question, { selectedText });

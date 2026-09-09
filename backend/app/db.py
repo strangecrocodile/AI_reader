@@ -91,6 +91,45 @@ class Database:
                  book.get("progress_pct", 0.0), book.get("created_at", "")),
             )
 
+    def add_book_bundle(
+        self,
+        book: Dict[str, Any],
+        chapters: List[Dict[str, Any]],
+        sections: List[Dict[str, Any]],
+        anchors: List[Dict[str, Any]],
+    ) -> None:
+        """在一个事务中写入教材及其章节、段落、锚点。"""
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO books(id,title,author,note,progress_pct,created_at) VALUES(?,?,?,?,?,?)",
+                (
+                    book["id"],
+                    book["title"],
+                    book.get("author", ""),
+                    book.get("note", ""),
+                    book.get("progress_pct", 0.0),
+                    book.get("created_at", ""),
+                ),
+            )
+            for c in chapters:
+                conn.execute(
+                    "INSERT INTO chapters(id,book_id,num,title,page_start,page_end,full_text) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (c["id"], c["book_id"], c["num"], c["title"], c["page_start"], c["page_end"], c["full_text"]),
+                )
+            for s in sections:
+                conn.execute(
+                    "INSERT INTO sections(id,book_id,chapter_id,seq,text,page,kind) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (s["id"], s["book_id"], s["chapter_id"], s["seq"], s["text"], s["page"], s["kind"]),
+                )
+            for a in anchors:
+                conn.execute(
+                    "INSERT INTO anchors(id,book_id,chapter_id,section_id,text,page) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (a["id"], a["book_id"], a["chapter_id"], a["section_id"], a["text"], a["page"]),
+                )
+
     def list_books(self) -> List[Dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM books ORDER BY created_at").fetchall()

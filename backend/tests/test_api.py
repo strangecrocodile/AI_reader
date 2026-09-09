@@ -55,6 +55,35 @@ def test_uploading_two_books_keeps_both_books_readable(client, demo_pdf_bytes):
     ).status_code == 200
 
 
+def test_book_bundle_write_rolls_back_on_duplicate_chapter(app):
+    db = app.state.db
+    book = {
+        "id": "atomic-book",
+        "title": "事务测试",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    chapter = {
+        "id": "atomic-chapter",
+        "book_id": book["id"],
+        "num": 1,
+        "title": "第一章",
+        "page_start": 1,
+        "page_end": 1,
+        "full_text": "正文",
+    }
+
+    import sqlite3
+
+    try:
+        db.add_book_bundle(book, [chapter, chapter], [], [])
+    except sqlite3.IntegrityError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("重复章节应触发事务回滚")
+
+    assert db.get_book(book["id"]) is None
+
+
 def test_chapter_content_with_lesson(client, demo_pdf_bytes):
     book = _upload(client, demo_pdf_bytes)
     for ch in book["chapters"]:
@@ -85,10 +114,39 @@ def test_ask_with_evidence(client, demo_pdf_bytes):
     data = resp.json()
     assert data["answer"]
     assert data["sources"], "应返回教材依据锚点"
+    assert data["sourceDetails"]
+    assert data["sourceDetails"][0]["page"] > 0
+    assert data["sourceDetails"][0]["id"] in data["sources"]
 
     chart = client.get(f"/api/books/{book['id']}/chapters/{ch['id']}").json()
     paragraph_ids = {seg["id"] for p in chart["paragraphs"] for seg in p.get("segs", [])}
     assert set(data["sources"]) <= paragraph_ids
+
+
+def test_vector_search_receives_current_chapter_allowlist(app, demo_pdf_bytes):
+    from fastapi.testclient import TestClient
+
+    book = _upload(TestClient(app), demo_pdf_bytes)
+    chapter = book["chapters"][0]
+    retrieval = app.state.retrieval
+
+    class FakeVector:
+        def __init__(self):
+            self.allowed_ids = None
+
+        def add(self, doc_ids, texts):
+            pass
+
+        def search(self, query, k=5, allowed_ids=None):
+            self.allowed_ids = set(allowed_ids or [])
+            return [("foreign-section", 0.99)]
+
+    fake = FakeVector()
+    retrieval._vector = fake
+    hits = retrieval.search(book["id"], chapter["id"], "导数", use_vector=True)
+
+    assert fake.allowed_ids
+    assert all(hit["section_id"] in fake.allowed_ids for hit in hits)
 
 
 def test_ask_no_evidence(client, demo_pdf_bytes):

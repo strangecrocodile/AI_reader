@@ -29,7 +29,7 @@ def answer_question(
     hits = retrieval.search(book_id, chapter_id, question, k=MAX_EVIDENCE)
     top = hits[0] if hits else None
     if not top or top["coverage"] < NO_EVIDENCE_THRESHOLD:
-        return {"answer": "教材中未找到直接依据", "sources": []}
+        return {"answer": "教材中未找到直接依据", "sources": [], "sourceDetails": []}
 
     anchors = {a["section_id"]: a for a in db.anchors_of(book_id, chapter_id)}
     sections = {s["id"]: s for s in db.sections_of(book_id, chapter_id)}
@@ -43,7 +43,16 @@ def answer_question(
             {"anchor_id": anchor["id"], "page": section["page"], "text": section["text"]}
         )
     if not evidence:
-        return {"answer": "教材中未找到直接依据", "sources": []}
+        return {"answer": "教材中未找到直接依据", "sources": [], "sourceDetails": []}
+
+    source_details = [
+        {
+            "id": item["anchor_id"],
+            "page": item["page"],
+            "text": item["text"],
+        }
+        for item in evidence
+    ]
 
     # 1) 真模型：提示词生成 + 解析 + 校验
     if llm.kind == "cloud":
@@ -64,12 +73,20 @@ def answer_question(
                 sources = [evidence[0]["anchor_id"]]
             if not answer:
                 answer = _rule_answer(question, evidence)
-            return {"answer": answer, "sources": sources}
+            return {
+                "answer": answer,
+                "sources": sources,
+                "sourceDetails": [item for item in source_details if item["id"] in sources],
+            }
         except (LLMError, json.JSONDecodeError, KeyError, TypeError) as e:
             logger.warning("LLM 问答失败，回退规则答案: %s", e)
 
     # 2) 规则回退：确定性答案 + 依据锚点
-    return {"answer": _rule_answer(question, evidence), "sources": [evidence[0]["anchor_id"]]}
+    return {
+        "answer": _rule_answer(question, evidence),
+        "sources": [evidence[0]["anchor_id"]],
+        "sourceDetails": source_details[:1],
+    }
 
 
 def _rule_answer(question: str, evidence: List[Dict[str, Any]]) -> str:

@@ -74,6 +74,7 @@ class RetrievalService:
         sections = self.db.sections_of(book_id, chapter_id)
         if not sections:
             return []
+        allowed_ids = {s["id"] for s in sections}
         bm25 = self._bm25(book_id, chapter_id, sections)
 
         bm25_hits = {doc_id: score for doc_id, score in bm25.search(query, k=max(k * 3, 10))}
@@ -84,7 +85,13 @@ class RetrievalService:
             vec = self._get_vector()
             if vec is not None:
                 try:
-                    for doc_id, sim in vec.search(query, k=max(k * 3, 10)):
+                    for doc_id, sim in vec.search(
+                        query,
+                        k=max(k * 3, 10),
+                        allowed_ids=allowed_ids,
+                    ):
+                        if doc_id not in allowed_ids:
+                            continue
                         merged[doc_id] = merged.get(doc_id, 0.0) + sim * 0.4
                 except Exception:
                     pass
