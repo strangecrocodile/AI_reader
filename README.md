@@ -19,6 +19,7 @@ conda config --set auto_activate_base false
 conda activate
 ### 1. 启动后端（端口 8000）
 
+初次
 ```powershell
 cd backend
 python -m venv .venv
@@ -26,15 +27,22 @@ python -m venv .venv
 .venv\Scripts\python.exe scripts\make_demo_pdf.py        # 生成原创示例教材（可选）
 .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
 ```
-
+之后
+cd backend
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
 ### 2. 启动前端（端口 3000）
 
+初次
 ```powershell
 cd frontend
 npm install
-$env:VITE_API_BASE_URL='http://localhost:8001'   # 接入真实后端
+$env:VITE_API_BASE_URL='http://localhost:8000'   # 接入真实后端
 npm run dev
 ```
+之后
+cd frontend
+$env:VITE_API_BASE_URL='http://localhost:8000'
+npm run dev
 
 不设置 `VITE_API_BASE_URL` 时前端使用内置演示数据（纯前端模式）。
 测试：后端 `.venv\Scripts\python.exe -m pytest`（15 项），前端 `npm test`（26 项）。
