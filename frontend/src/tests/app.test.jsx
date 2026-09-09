@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App.jsx';
+import { api } from '../services/api.js';
+import { books as mockBooks } from '../data/books.js';
 import { BookProvider } from '../state/BookContext.jsx';
 import { ToastProvider } from '../state/ToastContext.jsx';
 
@@ -50,6 +52,48 @@ describe('主页', () => {
 
     expect(screen.getByTestId('book-progress')).toHaveTextContent('6% 已完成');
     expect(screen.getByTestId('book-cover')).toHaveTextContent('线性代数');
+  });
+
+  it('选择 PDF 后上传、刷新教材列表并切换到新教材', async () => {
+    const uploaded = {
+      ...mockBooks[0],
+      id: 'uploaded-book',
+      title: '新上传教材',
+      cover: { ...mockBooks[0].cover, lines: ['新上传教材'] },
+    };
+    const fetchBooks = vi
+      .spyOn(api, 'fetchBooks')
+      .mockResolvedValueOnce(mockBooks)
+      .mockResolvedValueOnce([...mockBooks, uploaded]);
+    const uploadBook = vi.spyOn(api, 'uploadBook').mockResolvedValue(uploaded);
+    const user = userEvent.setup();
+
+    renderApp();
+    await screen.findByText('正在学习的教材');
+    await user.click(screen.getByRole('button', { name: /更换教材/ }));
+
+    const file = new File(['%PDF-demo'], 'new-book.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('选择 PDF 教材'), { target: { files: [file] } });
+
+    await waitFor(() => expect(uploadBook).toHaveBeenCalledWith(file));
+    expect(fetchBooks).toHaveBeenCalledTimes(2);
+    expect(await screen.findByTestId('book-cover')).toHaveTextContent('新上传教材');
+    expect(screen.getByText('《新上传教材》已上传并识别 3 个章节')).toBeInTheDocument();
+
+    uploadBook.mockRestore();
+    fetchBooks.mockRestore();
+  });
+
+  it('选择非 PDF 文件时不会发起上传并提示格式限制', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText('正在学习的教材');
+    await user.click(screen.getByRole('button', { name: /更换教材/ }));
+
+    const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
+    fireEvent.change(screen.getByLabelText('选择 PDF 教材'), { target: { files: [file] } });
+
+    expect(await screen.findByText('目前只支持上传 PDF 文件')).toBeInTheDocument();
   });
 });
 
