@@ -1,4 +1,5 @@
 import { books, studyContents } from '../data/books.js';
+import { knowledgeFor } from '../data/knowledge.js';
 import { answerFor } from './mockAnswers.js';
 
 /**
@@ -10,7 +11,9 @@ import { answerFor } from './mockAnswers.js';
  * - 演示模式：未配置时使用内置 mock 数据，交互链路不变。
  */
 
-let apiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+// 测试必须使用确定性的演示数据，不能因为本机 .env 配置而访问外部服务。
+let apiBase = import.meta.env.MODE === 'test' ? '' : configuredApiBase;
 
 /** 运行时切换后端地址（也用于测试）；传空字符串回到演示模式。 */
 export function configureApiBase(url) {
@@ -69,6 +72,19 @@ export const api = {
     await delay(200);
     const content = studyContents[bookId]?.[chapterId];
     return content ? structuredClone(content) : null;
+  },
+
+  /** 获取知识点卡片与关系图谱数据。 */
+  async fetchKnowledge(bookId) {
+    if (useBackend()) {
+      try {
+        return await request(`/api/books/${bookId}/knowledge`);
+      } catch {
+        return null;
+      }
+    }
+    await delay(160);
+    return structuredClone(knowledgeFor(bookId));
   },
 
   /**

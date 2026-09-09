@@ -42,6 +42,13 @@ describe('api 接口层', () => {
     expect(content.outline).toHaveLength(3);
   });
 
+  it('fetchKnowledge 返回知识点与关系', async () => {
+    const data = await api.fetchKnowledge('calc7');
+    expect(data.concepts.some((concept) => concept.title === '先抓住「变化率」')).toBe(true);
+    expect(data.relations.length).toBe(data.concepts.length - 1);
+    expect(data.stats.conceptCount).toBe(data.concepts.length);
+  });
+
   it('未准备的章节返回 null', async () => {
     expect(await api.fetchStudyContent('calc7', 'ch1')).toBeNull();
   });

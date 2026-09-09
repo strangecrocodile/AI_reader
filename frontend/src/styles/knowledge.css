@@ -1,0 +1,274 @@
+/* ---------- 知识地图 ---------- */
+.knowledge-page {
+  max-width: 1500px;
+  margin: auto;
+}
+
+.knowledge-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 30px;
+  max-width: 1280px;
+  margin: 0 auto 25px;
+}
+
+.knowledge-header h1 {
+  max-width: 720px;
+  margin-bottom: 13px;
+}
+
+.knowledge-header .sub {
+  max-width: 700px;
+}
+
+.knowledge-back,
+.detail-action {
+  border: 0;
+  background: var(--ink);
+  color: white;
+  padding: 12px 15px;
+  text-decoration: none;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.knowledge-stats {
+  max-width: 1280px;
+  margin: 0 auto 22px;
+  display: flex;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.knowledge-stat {
+  background: var(--card);
+  padding: 18px 22px;
+  min-width: 170px;
+  display: grid;
+  gap: 3px;
+}
+
+.knowledge-stat strong {
+  font: 700 27px 'DM Mono', monospace;
+  color: var(--green);
+}
+
+.knowledge-stat span,
+.section-title > span,
+.concept-chapter,
+.detail-meta,
+.detail-muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.knowledge-layout {
+  max-width: 1280px;
+  margin: auto;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.72fr) minmax(420px, 1.35fr) minmax(230px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.concept-panel,
+.graph-panel,
+.concept-detail {
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 22px;
+}
+
+.section-title {
+  margin-bottom: 15px;
+}
+
+.section-title h2 {
+  font-size: 19px;
+}
+
+.concept-list {
+  display: grid;
+  gap: 10px;
+}
+
+.concept-card {
+  border: 1px solid var(--line);
+  background: #fffef9;
+  text-align: left;
+  padding: 14px;
+  display: grid;
+  gap: 6px;
+  color: inherit;
+}
+
+.concept-card:hover,
+.concept-card.selected {
+  border-color: var(--green);
+  box-shadow: 3px 3px 0 #cbdcc8;
+}
+
+.concept-card strong {
+  font-family: 'Noto Serif SC', serif;
+}
+
+.concept-status {
+  justify-self: start;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.concept-status.learned {
+  background: #e2f0d7;
+  color: var(--green);
+}
+
+.concept-status.learning {
+  background: #fff1d9;
+  color: #a8522e;
+}
+
+.concept-status.planned {
+  background: #eef0ec;
+  color: var(--muted);
+}
+
+.mastery-track {
+  height: 4px;
+  background: #e6e5dd;
+  display: block;
+}
+
+.mastery-track i {
+  height: 100%;
+  background: var(--green);
+  display: block;
+}
+
+.knowledge-graph {
+  height: 440px;
+  position: relative;
+  overflow: hidden;
+  background: #f4f6ef;
+  border: 1px solid #dfe7d9;
+}
+
+.graph-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.graph-lines line {
+  stroke: #9db8a2;
+  stroke-width: 0.55;
+  stroke-dasharray: 2 1;
+}
+
+.graph-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  max-width: 145px;
+  min-width: 90px;
+  min-height: 54px;
+  border: 2px solid #9db8a2;
+  border-radius: 50%;
+  padding: 11px;
+  background: #fffef9;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 5px 12px rgba(29, 45, 39, 0.08);
+}
+
+.graph-node.learning {
+  border-color: var(--orange);
+}
+
+.graph-node.planned {
+  opacity: 0.62;
+}
+
+.graph-node.selected {
+  border-color: var(--green);
+  box-shadow: 0 0 0 4px #d9ef8a;
+}
+
+.graph-empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 160px 30px;
+}
+
+.concept-detail {
+  min-height: 220px;
+}
+
+.concept-detail h2 {
+  margin: 12px 0 13px;
+  font-size: 22px;
+}
+
+.concept-detail p {
+  color: #52625a;
+  font-size: 14px;
+  line-height: 1.8;
+  margin: 0 0 18px;
+}
+
+.detail-meta {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 11px 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detail-action {
+  margin-top: 18px;
+  display: inline-block;
+}
+
+.detail-muted {
+  display: block;
+  line-height: 1.7;
+  margin-top: 20px;
+}
+
+@media (max-width: 1050px) {
+  .knowledge-layout {
+    grid-template-columns: 1fr 1.3fr;
+  }
+
+  .concept-detail {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .knowledge-header {
+    display: block;
+  }
+
+  .knowledge-back {
+    display: inline-block;
+    margin-top: 15px;
+  }
+
+  .knowledge-stats {
+    overflow-x: auto;
+  }
+
+  .knowledge-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .concept-detail {
+    grid-column: auto;
+  }
+}

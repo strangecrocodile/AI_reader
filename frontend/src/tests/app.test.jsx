@@ -105,6 +105,32 @@ describe('学习页', () => {
   });
 });
 
+describe('知识地图', () => {
+  it('导航进入知识地图并展示知识点卡片与关系图谱', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText('正在学习的教材');
+
+    await user.click(screen.getByRole('link', { name: '知识地图' }));
+
+    expect(await screen.findByText('把读过的内容，连成一张地图。')).toBeInTheDocument();
+    expect(screen.getByText('知识点卡片')).toBeInTheDocument();
+    expect(screen.getByTestId('knowledge-graph')).toBeInTheDocument();
+    expect(screen.getAllByText('先抓住「变化率」').length).toBeGreaterThan(0);
+  });
+
+  it('点击知识点后可以回到对应章节学习页', async () => {
+    const user = userEvent.setup();
+    renderApp(['/knowledge']);
+    await screen.findByText('知识点卡片');
+
+    await user.click(screen.getByRole('button', { name: /回到教材原文/ }));
+
+    expect(await screen.findByTestId('paper')).toBeInTheDocument();
+    expect(document.getElementById('source-rate')).toHaveClass('focus');
+  });
+});
+
 describe('划词问答', () => {
   it('拖选原文后提问，展示回答与教材依据', async () => {
     const user = userEvent.setup();

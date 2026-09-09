@@ -5,6 +5,7 @@ from ..models import AskRequest
 from ..serializers import book_meta, chapter_content
 from ..services.ask import answer_question
 from ..services.ingest import ingest_pdf_bytes
+from ..services.knowledge import get_knowledge
 
 router = APIRouter()
 
@@ -66,6 +67,16 @@ def get_chapter(book_id: str, chapter_id: str, request: Request):
     if not chapter:
         raise HTTPException(status_code=404, detail="章节不存在")
     return chapter_content(db, llm, book, chapter)
+
+
+@router.get("/api/books/{book_id}/knowledge")
+def get_book_knowledge(book_id: str, request: Request):
+    """返回知识点卡片与章节内学习顺序关系。"""
+    db, llm, _, _ = _state(request)
+    book = db.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="教材不存在")
+    return get_knowledge(db, llm, book)
 
 
 @router.post("/api/ask")

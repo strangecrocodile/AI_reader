@@ -94,3 +94,25 @@ def test_plan_generation(client, demo_pdf_bytes):
     # 缓存幂等
     again = client.post(f"/api/books/{book['id']}/plan").json()
     assert again["items"] == items
+
+
+def test_knowledge_map_aggregates_lesson_points(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+
+    resp = client.get(f"/api/books/{book['id']}/knowledge")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["bookId"] == book["id"]
+    assert data["concepts"]
+    assert data["stats"]["conceptCount"] == len(data["concepts"])
+    assert data["stats"]["relationCount"] == len(data["relations"])
+    for concept in data["concepts"]:
+        assert concept["title"]
+        assert concept["chapterId"]
+        assert concept["sourceId"]
+
+
+def test_knowledge_map_unknown_book_404(client):
+    resp = client.get("/api/books/nope/knowledge")
+    assert resp.status_code == 404

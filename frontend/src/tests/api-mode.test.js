@@ -24,6 +24,18 @@ describe('api 后端模式（REST）', () => {
     expect(await api.fetchStudyContent('b1', 'ch9')).toBeNull();
   });
 
+  it('fetchKnowledge 请求知识地图接口', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ bookId: 'b1', concepts: [], relations: [] }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.fetchKnowledge('b1')).resolves.toMatchObject({ bookId: 'b1' });
+    expect(fetchMock).toHaveBeenCalledWith('http://backend.test/api/books/b1/knowledge', expect.anything());
+  });
+
   it('ask 以 POST /api/ask 提交并映射 answer→text', async () => {
     configureApiBase('http://backend.test');
     const fetchMock = vi.fn(async () => ({

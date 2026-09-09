@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Reader from '../components/Reader.jsx';
 import CoachPanel from '../components/CoachPanel.jsx';
 import { api } from '../services/api.js';
@@ -9,6 +9,7 @@ import { useToast } from '../state/ToastContext.jsx';
 /** 学习页：左栏教材原文 + 右栏 AI 讲解与问答。 */
 export default function StudyPage() {
   const { bookId, chapterId } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -45,6 +46,13 @@ export default function StudyPage() {
     },
     [toast],
   );
+
+  useEffect(() => {
+    const sourceId = searchParams.get('sourceId');
+    if (sourceId && content) {
+      focusSource(sourceId, '已定位到知识点原文');
+    }
+  }, [content, searchParams, focusSource]);
 
   const handleSelect = useCallback((text) => {
     setSelected({ text, truncated: truncate(text) });
