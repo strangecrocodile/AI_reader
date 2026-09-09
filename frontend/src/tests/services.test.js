@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { answerFor } from '../services/mockAnswers.js';
 import { api } from '../services/api.js';
+
+beforeEach(() => {
+  localStorage.clear();
+});
 
 describe('answerFor（模拟问答）', () => {
   it('含「极限」的问题返回极限讲解并引用导数定义', () => {
@@ -47,6 +51,21 @@ describe('api 接口层', () => {
     expect(data.concepts.some((concept) => concept.title === '先抓住「变化率」')).toBe(true);
     expect(data.relations.length).toBe(data.concepts.length - 1);
     expect(data.stats.conceptCount).toBe(data.concepts.length);
+  });
+
+  it('markChapterProgress 会让演示知识点进入学习中', async () => {
+    await api.markChapterProgress({ bookId: 'calc7', chapterId: 'ch2', status: 'learning', mastery: 42 });
+    const data = await api.fetchKnowledge('calc7');
+    expect(data.concepts.find((concept) => concept.chapterId === 'ch2').status).toBe('learning');
+  });
+
+  it('fetchBooks 会反映演示模式中的章节学习进度', async () => {
+    await api.markChapterProgress({ bookId: 'calc7', chapterId: 'ch2', status: 'learning', mastery: 42 });
+    const book = await api.fetchBook('calc7');
+    expect(book.chapters.find((chapter) => chapter.id === 'ch2')).toMatchObject({
+      status: 'learning',
+      progressPct: 42,
+    });
   });
 
   it('未准备的章节返回 null', async () => {

@@ -14,6 +14,7 @@ import { answerFor } from './mockAnswers.js';
 const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 // 测试必须使用确定性的演示数据，不能因为本机 .env 配置而访问外部服务。
 let apiBase = import.meta.env.MODE === 'test' ? '' : configuredApiBase;
+const PROGRESS_KEY = 'ai_reader.chapterProgress';
 
 /** 运行时切换后端地址（也用于测试）；传空字符串回到演示模式。 */
 export function configureApiBase(url) {
@@ -40,7 +41,7 @@ export const api = {
   async fetchBooks() {
     if (useBackend()) return request('/api/books');
     await delay(200); // 模拟网络耗时
-    return books.map((b) => ({ ...b, chapters: b.chapters.map((c) => ({ ...c })) }));
+    return books.map((b) => withLocalProgress(b));
   },
 
   /** 获取单本教材；不存在返回 null。 */
@@ -54,7 +55,7 @@ export const api = {
     }
     await delay(150);
     const book = books.find((b) => b.id === bookId);
-    return book ? { ...book } : null;
+    return book ? withLocalProgress(book) : null;
   },
 
   /**
@@ -84,7 +85,27 @@ export const api = {
       }
     }
     await delay(160);
-    return structuredClone(knowledgeFor(bookId));
+    return structuredClone(knowledgeFor(bookId, readProgress(bookId)));
+  },
+
+  /** 记录进入章节或完成问答等学习事件。 */
+  async markChapterProgress({ bookId, chapterId, status, mastery }) {
+    if (useBackend()) {
+      const data = await request(`/api/books/${bookId}/chapters/${chapterId}/progress`, {
+        method: 'POST',
+        body: JSON.stringify({ status, mastery }),
+      });
+      return data;
+    }
+    const progress = readAllProgress();
+    const previous = progress[bookId]?.[chapterId];
+    progress[bookId] ??= {};
+    progress[bookId][chapterId] = {
+      status,
+      mastery: Math.max(previous?.mastery ?? 0, mastery),
+    };
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+    return progress[bookId][chapterId];
   },
 
   /**
@@ -104,3 +125,44 @@ export const api = {
     return answerFor(question, { selectedText });
   },
 };
+
+function readAllProgress() {
+  try {
+    return JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function readProgress(bookId) {
+  return readAllProgress()[bookId] ?? {};
+}
+
+function withLocalProgress(b) {
+  const progress = readProgress(b.id);
+  if (Object.keys(progress).length === 0) {
+    return {
+      ...b,
+      chapters: b.chapters.map((chapter) => ({ ...chapter })),
+    };
+  }
+  const chapters = b.chapters.map((chapter, index) => {
+    const saved = progress[chapter.id];
+    if (!saved) return { ...chapter };
+    return {
+      ...chapter,
+      status: saved.status,
+      meta: saved.status === 'learned' ? '已完成' : '正在学习',
+      progressPct: saved.mastery,
+      isToday: index === 0 && saved.status !== 'learned',
+    };
+  });
+  const mastery =
+    chapters.reduce((sum, chapter) => sum + (progress[chapter.id]?.mastery ?? 0), 0) /
+    Math.max(chapters.length, 1);
+  return {
+    ...b,
+    progressText: `${Math.round(mastery)}% 已完成`,
+    chapters,
+  };
+}

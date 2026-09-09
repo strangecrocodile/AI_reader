@@ -1,4 +1,4 @@
-"""SQLite 存储层：教材、章节、段落（锚点）、备课讲解、学习路径。"""
+"""SQLite 存储层：教材、章节、段落（锚点）、备课讲解、学习路径和学习进度。"""
 import json
 import sqlite3
 from pathlib import Path
@@ -53,8 +53,17 @@ CREATE TABLE IF NOT EXISTS plans (
   model TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chapter_progress (
+  book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'planned',
+  mastery REAL NOT NULL DEFAULT 0,
+  last_seen TEXT NOT NULL,
+  PRIMARY KEY (book_id, chapter_id)
+);
 CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(book_id, chapter_id);
+CREATE INDEX IF NOT EXISTS idx_progress_book ON chapter_progress(book_id);
 """
 
 
@@ -123,6 +132,50 @@ class Database:
                 "SELECT * FROM chapters WHERE book_id=? AND id=?", (book_id, chapter_id)
             ).fetchone()
             return dict(row) if row else None
+
+    # ---------- 学习进度 ----------
+    def upsert_chapter_progress(
+        self, book_id: str, chapter_id: str, status: str, mastery: float
+    ) -> Dict[str, Any]:
+        mastery = max(0.0, min(100.0, float(mastery)))
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO chapter_progress(book_id,chapter_id,status,mastery,last_seen) "
+                "VALUES(?,?,?,?,?) "
+                "ON CONFLICT(book_id,chapter_id) DO UPDATE SET "
+                "status=CASE WHEN chapter_progress.status='learned' "
+                "OR excluded.status='learned' THEN 'learned' ELSE excluded.status END, "
+                "mastery=MAX(chapter_progress.mastery, excluded.mastery), "
+                "last_seen=excluded.last_seen",
+                (book_id, chapter_id, status, mastery, _now()),
+            )
+            row = conn.execute(
+                "SELECT * FROM chapter_progress WHERE book_id=? AND chapter_id=?",
+                (book_id, chapter_id),
+            ).fetchone()
+            return dict(row)
+
+    def progress_of_book(self, book_id: str) -> Dict[str, Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chapter_progress WHERE book_id=?", (book_id,)
+            ).fetchall()
+            return {row["chapter_id"]: dict(row) for row in rows}
+
+    def update_book_progress_from_chapters(self, book_id: str) -> None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT AVG(COALESCE(p.mastery, 0)) AS average_mastery "
+                "FROM chapters c LEFT JOIN chapter_progress p "
+                "ON p.book_id=c.book_id AND p.chapter_id=c.id "
+                "WHERE c.book_id=?",
+                (book_id,),
+            ).fetchone()
+            if row and row["average_mastery"] is not None:
+                conn.execute(
+                    "UPDATE books SET progress_pct=? WHERE id=?",
+                    (row["average_mastery"], book_id),
+                )
 
     # ---------- 段落 ----------
     def add_sections(self, sections: List[Dict[str, Any]]) -> None:

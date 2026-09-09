@@ -1,5 +1,5 @@
 """序列化：把数据库行转换为与前端 services/api.js 约定一致的结构。"""
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .db import Database
 from .services import lesson, plan as plan_service
@@ -7,8 +7,9 @@ from .services import lesson, plan as plan_service
 
 def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
     chapters = db.chapters_of(book["id"])
+    progress_by_chapter = db.progress_of_book(book["id"])
     plan = plan_service.get_plan(db, llm, book, chapters)
-    pct = int(book.get("progress_pct", 0) or 0)
+    pct = round(book.get("progress_pct", 0) or 0)
     return {
         "id": book["id"],
         "title": book["title"],
@@ -24,7 +25,10 @@ def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
             "footer": f"第 {len(chapters)} 章已识别",
         },
         "plan": _plan_to_frontend(plan),
-        "chapters": [_chapter_to_frontend(c, i == 0) for i, c in enumerate(chapters)],
+        "chapters": [
+            _chapter_to_frontend(c, i == 0, progress_by_chapter.get(c["id"]))
+            for i, c in enumerate(chapters)
+        ],
     }
 
 
@@ -43,15 +47,19 @@ def _plan_to_frontend(plan: Dict) -> Dict[str, Any]:
     }
 
 
-def _chapter_to_frontend(c: Dict, is_first: bool = False) -> Dict[str, Any]:
+def _chapter_to_frontend(
+    c: Dict, is_first: bool = False, progress: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    status = progress["status"] if progress else ("doing" if is_first else "todo")
+    mastery = round(progress["mastery"]) if progress else 0
     return {
         "id": c["id"],
         "num": f"{c['num']:02d}",
         "title": c["title"],
-        "status": "doing" if is_first else "todo",
-        "meta": "今日学习" if is_first else "待学习",
-        "progressPct": 0,
-        "isToday": is_first,
+        "status": status,
+        "meta": "已完成" if status == "learned" else "正在学习" if status == "learning" else "待学习",
+        "progressPct": mastery,
+        "isToday": is_first and status != "learned",
     }
 
 

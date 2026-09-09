@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, configureApiBase } from '../services/api.js';
 
 afterEach(() => {
   configureApiBase('');
   vi.unstubAllGlobals();
+});
+
+beforeEach(() => {
+  localStorage.clear();
 });
 
 describe('api 后端模式（REST）', () => {
@@ -34,6 +38,23 @@ describe('api 后端模式（REST）', () => {
 
     await expect(api.fetchKnowledge('b1')).resolves.toMatchObject({ bookId: 'b1' });
     expect(fetchMock).toHaveBeenCalledWith('http://backend.test/api/books/b1/knowledge', expect.anything());
+  });
+
+  it('markChapterProgress 请求章节进度接口', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ status: 'learning', mastery: 15 }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      api.markChapterProgress({ bookId: 'b1', chapterId: 'ch1', status: 'learning', mastery: 15 }),
+    ).resolves.toMatchObject({ mastery: 15 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://backend.test/api/books/b1/chapters/ch1/progress',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('ask 以 POST /api/ask 提交并映射 answer→text', async () => {

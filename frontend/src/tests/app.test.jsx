@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App.jsx';
@@ -127,7 +127,7 @@ describe('知识地图', () => {
     await user.click(screen.getByRole('button', { name: /回到教材原文/ }));
 
     expect(await screen.findByTestId('paper')).toBeInTheDocument();
-    expect(document.getElementById('source-rate')).toHaveClass('focus');
+    await waitFor(() => expect(document.getElementById('source-rate')).toHaveClass('focus'));
   });
 });
 

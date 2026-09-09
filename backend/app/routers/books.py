@@ -1,7 +1,7 @@
 """教材/章节/规划接口。"""
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
-from ..models import AskRequest
+from ..models import AskRequest, ProgressRequest
 from ..serializers import book_meta, chapter_content
 from ..services.ask import answer_question
 from ..services.ingest import ingest_pdf_bytes
@@ -77,6 +77,23 @@ def get_book_knowledge(book_id: str, request: Request):
     if not book:
         raise HTTPException(status_code=404, detail="教材不存在")
     return get_knowledge(db, llm, book)
+
+
+@router.post("/api/books/{book_id}/chapters/{chapter_id}/progress")
+def update_chapter_progress(
+    book_id: str, chapter_id: str, payload: ProgressRequest, request: Request
+):
+    """记录一次章节学习事件，并更新教材总进度。"""
+    db, _, _, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    if not db.get_chapter(book_id, chapter_id):
+        raise HTTPException(status_code=404, detail="章节不存在")
+    progress = db.upsert_chapter_progress(
+        book_id, chapter_id, payload.status, payload.mastery
+    )
+    db.update_book_progress_from_chapters(book_id)
+    return progress
 
 
 @router.post("/api/ask")

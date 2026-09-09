@@ -116,3 +116,49 @@ def test_knowledge_map_aggregates_lesson_points(client, demo_pdf_bytes):
 def test_knowledge_map_unknown_book_404(client):
     resp = client.get("/api/books/nope/knowledge")
     assert resp.status_code == 404
+
+
+def test_chapter_progress_updates_knowledge_status_and_book_progress(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter_id = book["chapters"][0]["id"]
+
+    resp = client.post(
+        f"/api/books/{book['id']}/chapters/{chapter_id}/progress",
+        json={"status": "learning", "mastery": 35},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["mastery"] == 35
+    knowledge = client.get(f"/api/books/{book['id']}/knowledge").json()
+    chapter_concepts = [c for c in knowledge["concepts"] if c["chapterId"] == chapter_id]
+    assert chapter_concepts
+    assert all(c["status"] == "learning" and c["mastery"] == 35 for c in chapter_concepts)
+
+    refreshed = client.get(f"/api/books/{book['id']}").json()
+    assert refreshed["progressText"] == "18% 已完成"
+
+
+def test_chapter_progress_does_not_lower_mastery(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter_id = book["chapters"][0]["id"]
+    url = f"/api/books/{book['id']}/chapters/{chapter_id}/progress"
+
+    client.post(url, json={"status": "learning", "mastery": 42})
+    resp = client.post(url, json={"status": "learning", "mastery": 10})
+
+    assert resp.json()["mastery"] == 42
+
+
+def test_learned_progress_is_not_downgraded_by_revisiting(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter_id = book["chapters"][0]["id"]
+    url = f"/api/books/{book['id']}/chapters/{chapter_id}/progress"
+
+    client.post(url, json={"status": "learned", "mastery": 100})
+    resp = client.post(url, json={"status": "learning", "mastery": 15})
+
+    assert resp.json()["status"] == "learned"
+    assert resp.json()["mastery"] == 100
+    refreshed = client.get(f"/api/books/{book['id']}").json()
+    assert refreshed["chapters"][0]["status"] == "learned"
+    assert refreshed["chapters"][0]["progressPct"] == 100

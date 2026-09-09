@@ -9,3 +9,8 @@ class AskRequest(BaseModel):
     bookId: str
     chapterId: str
     selectedText: Optional[str] = None
+
+
+class ProgressRequest(BaseModel):
+    status: str = Field(pattern="^(learning|learned)$")
+    mastery: float = Field(ge=0, le=100)

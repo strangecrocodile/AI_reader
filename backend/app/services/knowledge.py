@@ -16,8 +16,9 @@ def get_knowledge(db: Database, llm, book: Dict[str, Any]) -> Dict[str, Any]:
     concepts: List[Dict[str, Any]] = []
     relations: List[Dict[str, Any]] = []
     chapters = db.chapters_of(book["id"])
+    progress_by_chapter = db.progress_of_book(book["id"])
 
-    for chapter_index, chapter in enumerate(chapters):
+    for chapter in chapters:
         sections = db.sections_of(book["id"], chapter["id"])
         anchors = db.anchors_of(book["id"], chapter["id"])
         lesson = get_lesson(db, llm, chapter, sections, anchors)
@@ -26,6 +27,9 @@ def get_knowledge(db: Database, llm, book: Dict[str, Any]) -> Dict[str, Any]:
         for point_index, point in enumerate(lesson.get("points", [])):
             concept_id = f"{chapter['id']}:{point['id']}"
             source_id = point.get("sourceId")
+            progress = progress_by_chapter.get(chapter["id"])
+            status = progress["status"] if progress else "planned"
+            mastery = progress["mastery"] if progress else 0
             concept = {
                 "id": concept_id,
                 "title": point.get("title", f"知识点 {point_index + 1}"),
@@ -34,8 +38,8 @@ def get_knowledge(db: Database, llm, book: Dict[str, Any]) -> Dict[str, Any]:
                 "chapterTitle": chapter["title"],
                 "sourceId": source_id,
                 "sourceLabel": point.get("sourceLabel", "定位教材：原文"),
-                "status": "learning" if chapter_index == 0 else "planned",
-                "mastery": 42 if chapter_index == 0 else 0,
+                "status": status,
+                "mastery": mastery,
             }
             concepts.append(concept)
             chapter_concepts.append(concept)

@@ -30,6 +30,11 @@ export default function StudyPage() {
       if (cancelled) return;
       setContent(data);
       setLoading(false);
+      if (data) {
+        api
+          .markChapterProgress({ bookId, chapterId, status: 'learning', mastery: 15 })
+          .catch(() => {});
+      }
     });
     return () => {
       cancelled = true;
@@ -67,10 +72,15 @@ export default function StudyPage() {
       setAsking(true);
       const res = await api.ask({ question, selectedText: selected?.text, bookId, chapterId });
       setChat((prev) => [...prev, { role: 'assistant', text: res.text, sources: res.sources }]);
+      try {
+        await api.markChapterProgress({ bookId, chapterId, status: 'learning', mastery: 42 });
+      } catch {
+        toast('回答已完成，但学习进度暂时未同步');
+      }
       setAsking(false);
       setSelected(null);
     },
-    [selected, bookId, chapterId],
+    [selected, bookId, chapterId, toast],
   );
 
   if (loading) {
