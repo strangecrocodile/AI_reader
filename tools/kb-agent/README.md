@@ -1,14 +1,27 @@
 # kb-agent · 教材入库 Agent（原型）
 
-把**一整本书的 Word 文档（.docx）**自动处理成 **RAG 知识库**的独立原型工具。
+把**一整本书（.docx / .txt / .md）**自动处理成 **RAG 知识库 + 概念层**的独立原型工具。
 
-> 定位：小组分工里“教材入库/拆书/建库”这条线的验证，放 D 盘独立目录，
-> 不进入 AI_reader/backend（那是后端同学的代码，只收 PDF；本原型验证 Word 教材入库链路）。
+> 定位：小组分工里“教材入库/拆书/建库/知识点抽取”这条线的验证原型。
+> 已并入 AI_reader 仓库 `tools/kb-agent/`（main）。
+
+## 新增能力（V2 起）
+
+| 能力 | 说明 | 产物 |
+|---|---|---|
+| LangSmith 追踪 | 配 `LANGCHAIN_API_KEY` 即启用，run/ask/LLM 三层轨迹上报 | 平台轨迹 |
+| 真书适配 | md 代码块过滤、一级标题成章、embedding 分批调用 | 见下 |
+| V2 知识点抽取 | DeepSeek 结构化输出 `{concept, definition, prerequisites, example, anchors}`，规则兜底+清洗去重 | `concepts.json` |
+| V2.5 概念图谱 | prerequisites→边、概念跨章合并去重、未解析前置单列 | `graph.json` |
+| 图谱预览 | Cytoscape 单文件预览（数据内嵌，双击即开） | `graph-preview.html` |
+| 思维导图 | 层级 Markdown 大纲 + markmap 渲染（可直接导入 markmap REPL / XMind） | `mindmap.md` / `mindmap.html` |
+
+真书验证：《动手学深度学习》(d2l-zh, Apache-2.0) 6 章 → 7 份章节 docx / 79 检索块 / 58 知识点 / 图谱 57 节点 48 边。测试 **52 项**。
 
 ## 处理流水线（P0–P3 已实现）
 
 ```
-整本书 .docx（输入）
+整本书 .docx / .txt / .md（输入）
    │ P0 解析 + 字数统计         ✅ 读 Word 段落/样式；统计去空白字符/中文/英文词
    ▼
 书本结构报告（书名｜章节｜每章字数｜总字数）
@@ -24,6 +37,9 @@ RAG 知识库（JSON 持久化）→ 余弦检索
    │ P3 Agent 编排              ✅ LangChain @tool 声明工具：分析→拆书→建库→问答
    ▼
 字数报告 / 章节 docx / manifest / kb.json / 检索问答（带锚点）
+   │ V2  → concepts.json（知识点层）
+   ▼
+   │ V2.5 → graph.json → 图谱/思维导图预览
 ```
 
 ## 目录结构

@@ -59,6 +59,10 @@ class ChatLLM:
         messages = [{"role": "system", "content": _SYSTEM_PROMPT}, {"role": "user", "content": user}]
         return self._complete(messages)
 
+    def complete(self, messages: list[dict]) -> str:
+        """公开的消息级补全：供知识点抽取等结构化任务复用（不走问答提示词）。"""
+        return self._complete(messages)
+
 
 def build_chat_llm() -> ChatLLM | None:
     """按 .env/环境变量构造问答 LLM；缺 key 返回 None。"""
