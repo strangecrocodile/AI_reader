@@ -46,7 +46,7 @@ kb-agent/
 ## 运行方式（PowerShell）
 
 ```powershell
-cd D:\kb-agent
+cd tools\kb-agent          # 从仓库根目录进入本组件
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 
