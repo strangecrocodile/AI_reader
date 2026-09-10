@@ -52,3 +52,24 @@ def test_txt_split_book_end_to_end(tmp_path: Path):
     assert (out / "t1-ch1.docx").exists()
     assert (out / "t1-ch2.docx").exists()
     assert m["book"]["counts"]["cjk"] > 50
+
+
+def test_md_headings_recognized(tmp_path: Path):
+    """Markdown 的 # 标题应被识别为 Heading 层级，可用于章节切分。"""
+    p = tmp_path / "book.md"
+    p.write_text(
+        "# 第一章 函数\n"
+        "正文段落一。\n"
+        "## 小节内容\n"
+        "正文段落二。\n"
+        "# 第二章 导数\n"
+        "正文段落三。\n",
+        encoding="utf-8",
+    )
+    rows = read_paragraphs(p)
+    heads = [r for r in rows if r.is_heading]
+    assert [r.text for r in heads] == ["第一章 函数", "小节内容", "第二章 导数"]
+    assert heads[0].level == 1 and heads[1].level == 2
+
+    chapters = detect_chapters(rows)
+    assert [c.title for c in chapters] == ["第一章 函数", "第二章 导数"]

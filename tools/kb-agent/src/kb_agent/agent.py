@@ -171,6 +171,36 @@ class KBAgent:
         ]
         return "\n".join(lines)
 
+    # ------------------------------------------------------------- V2：知识点抽取
+    def extract_concepts(self, out_dir: str | Path | None = None) -> dict:
+        """在已拆好的 manifest 上做知识点抽取（LLM 优先，规则兜底）。"""
+        if self.result is None or not self.result.manifest_path:
+            raise RuntimeError("请先 run() 建库后再 extract_concepts()")
+        from .extract import extract_from_manifest
+
+        out_dir = Path(out_dir) if out_dir else Path(self.result.manifest_path).parent
+        out_path = out_dir / "concepts.json"
+        # 单独构造一个未包装的 ChatLLM 用于结构化抽取（不受问答提示词影响）
+        from .llm_chat import build_chat_llm
+
+        llm = build_chat_llm()
+        res = extract_from_manifest(self.result.manifest_path, out_path=out_path, llm=llm)
+        self.concepts = res
+        return res
+
+    # ------------------------------------------------------------- V2.5：概念图谱
+    def build_graph(self, out_dir: str | Path | None = None) -> dict:
+        """基于 concepts.json 生成概念关系图谱数据（graph.json）。"""
+        from .graph import build_concept_graph
+
+        base = Path(out_dir) if out_dir else (Path(self.result.manifest_path).parent if self.result else Path("."))
+        concepts_path = base / "concepts.json"
+        if not concepts_path.exists():
+            self.extract_concepts(base)
+        g = build_concept_graph(concepts_path, out_path=base / "graph.json")
+        self.graph = g
+        return g
+
 
 def main() -> None:  # pragma: no cover
     import argparse
@@ -182,6 +212,8 @@ def main() -> None:  # pragma: no cover
     parser.add_argument("--book-id", default="b1")
     parser.add_argument("--char-limit", type=int, default=SPLIT_CHAR_LIMIT)
     parser.add_argument("--query", default="", help="建库后执行一条检索问答")
+    parser.add_argument("--extract", action="store_true", help="建库后执行 V2 知识点抽取（LLM 优先，规则兜底）")
+    parser.add_argument("--graph", action="store_true", help="建库后生成概念关系图谱数据 graph.json")
     args = parser.parse_args()
 
     agent = KBAgent(book_id=args.book_id, char_limit=args.char_limit)
@@ -192,6 +224,14 @@ def main() -> None:  # pragma: no cover
         res = agent.ask(args.query)
         for h in res["hits"]:
             print(f"  [{h['score']}] (章 {h['chapter_id']}) {h['text'][:60]}…  锚点: {h['anchors'][:3]}")
+    if args.extract or args.graph:
+        ex = agent.extract_concepts()
+        print(f"\n[知识点抽取] methods={ex['methods']} chapters={ex['chapters']} concepts={len(ex['concepts'])}")
+        print(f"产物：{ex.get('out_path')}")
+    if args.graph:
+        g = agent.build_graph()
+        print(f"[概念图谱] {g['meta']}")
+        print(f"产物：{g.get('out_path')}")
 
 
 if __name__ == "__main__":

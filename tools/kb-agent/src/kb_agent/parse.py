@@ -72,13 +72,28 @@ def _decode_text_bytes(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
+
+
 def _read_text_lines(path: Path) -> list[ParaRow]:
     raw = path.read_bytes()
     text = _decode_text_bytes(raw)
     rows: list[ParaRow] = []
+    in_code = False  # Markdown ``` 代码块内的行不算正文/标题
     for i, line in enumerate(text.splitlines()):
         line = line.strip()
+        if line.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
         if not line:
+            continue
+        # Markdown 标题（# 数 = 层级）→ 章节识别可走 Heading 路径
+        m = _MD_HEADING_RE.match(line)
+        if m:
+            level = min(len(m.group(1)), 9)
+            rows.append(ParaRow(text=m.group(2).strip(), style=f"Heading {level}", level=level, index=i))
             continue
         rows.append(ParaRow(text=line, style="Normal", level=0, index=i))
     return rows

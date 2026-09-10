@@ -62,7 +62,7 @@ def detect_chapters(rows: list[ParaRow]) -> list[Chapter]:
         return []
 
     def _starts_chapter(row: ParaRow) -> bool:
-        if row.level >= 1:  # Heading 1..9 一律视为章标题
+        if row.level == 1:  # 仅一级标题算“章”；## 二级标题是章内小节
             return True
         return bool(_CHAPTER_TEXT_RE.match(row.text))
 

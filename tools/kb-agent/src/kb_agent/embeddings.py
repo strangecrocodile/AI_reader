@@ -31,7 +31,7 @@ ENV_MODEL = "EMBED_MODEL"
 class OpenAICompatEmbedder:
     """调用 OpenAI 兼容 /embeddings 接口（联网时启用）。"""
 
-    def __init__(self, base_url: str, api_key: str, model: str, timeout: int = 15):
+    def __init__(self, base_url: str, api_key: str, model: str, timeout: int = 60):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -54,7 +54,12 @@ class OpenAICompatEmbedder:
         return self._post([text])[0]
 
     def embed_many(self, texts: list[str]) -> list[list[float]]:
-        return self._post(texts)
+        """分批嵌入：单次请求条数过多会超时/被限流，按 EMBED_BATCH_SIZE 分批。"""
+        batch = int(os.getenv("EMBED_BATCH_SIZE", "32"))
+        out: list[list[float]] = []
+        for i in range(0, len(texts), batch):
+            out.extend(self._post(texts[i : i + batch]))
+        return out
 
 
 class _LocalSTSEmbedder:
