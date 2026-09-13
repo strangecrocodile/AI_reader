@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS chapter_progress (
   last_seen TEXT NOT NULL,
   PRIMARY KEY (book_id, chapter_id)
 );
+CREATE TABLE IF NOT EXISTS concepts (
+  book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  payload TEXT NOT NULL,
+  model TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (book_id, chapter_id)
+);
 CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(book_id, chapter_id);
 CREATE INDEX IF NOT EXISTS idx_progress_book ON chapter_progress(book_id);
@@ -270,6 +278,23 @@ class Database:
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT payload,model FROM explanations WHERE book_id=? AND chapter_id=?",
+                (book_id, chapter_id),
+            ).fetchone()
+            return {"payload": json.loads(row["payload"]), "model": row["model"]} if row else None
+
+    # ---------- 知识点抽取（缓存） ----------
+    def upsert_concepts(self, book_id: str, chapter_id: str, payload: Dict[str, Any], model: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO concepts(book_id,chapter_id,payload,model,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (book_id, chapter_id, json.dumps(payload, ensure_ascii=False), model, _now()),
+            )
+
+    def get_concepts(self, book_id: str, chapter_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT payload,model FROM concepts WHERE book_id=? AND chapter_id=?",
                 (book_id, chapter_id),
             ).fetchone()
             return {"payload": json.loads(row["payload"]), "model": row["model"]} if row else None

@@ -184,7 +184,7 @@ def test_plan_generation(client, demo_pdf_bytes):
     assert again["items"] == items
 
 
-def test_knowledge_map_aggregates_lesson_points(client, demo_pdf_bytes):
+def test_knowledge_map_builds_concept_graph(client, demo_pdf_bytes):
     book = _upload(client, demo_pdf_bytes)
 
     resp = client.get(f"/api/books/{book['id']}/knowledge")
@@ -195,10 +195,56 @@ def test_knowledge_map_aggregates_lesson_points(client, demo_pdf_bytes):
     assert data["concepts"]
     assert data["stats"]["conceptCount"] == len(data["concepts"])
     assert data["stats"]["relationCount"] == len(data["relations"])
+    assert data["stats"]["prerequisiteCount"] <= data["stats"]["relationCount"]
+    assert data["stats"]["unresolvedCount"] == len(data["unresolved"])
+    assert set(data["methods"]) <= {"rule", "llm"}
+
+    concept_ids = {c["id"] for c in data["concepts"]}
     for concept in data["concepts"]:
+        # 兼容旧前端字段
         assert concept["title"]
         assert concept["chapterId"]
         assert concept["sourceId"]
+        # v2 概念层字段
+        assert concept["definition"]
+        assert concept["chapterId"] in concept["chapters"]
+        assert concept["anchorCount"] == len(concept["anchors"])
+        assert isinstance(concept["prerequisites"], list)
+
+    for relation in data["relations"]:
+        assert relation["type"] in {"prerequisite", "sequence"}
+        assert relation["label"]
+        assert relation["source"] in concept_ids and relation["target"] in concept_ids
+        assert relation["source"] != relation["target"]
+
+
+def test_knowledge_concepts_link_back_to_real_anchors(client, demo_pdf_bytes):
+    """每个知识点的锚点必须真实存在于其章节原文，保证可回跳核对。"""
+    book = _upload(client, demo_pdf_bytes)
+    data = client.get(f"/api/books/{book['id']}/knowledge").json()
+
+    anchors_by_chapter = {}
+    for chapter in book["chapters"]:
+        content = client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()
+        anchors_by_chapter[chapter["id"]] = {
+            seg["id"] for p in content["paragraphs"] for seg in p.get("segs", [])
+        }
+
+    for concept in data["concepts"]:
+        valid = anchors_by_chapter.get(concept["chapterId"], set())
+        assert concept["sourceId"] in valid
+        assert set(concept["anchors"]) <= valid
+
+
+def test_knowledge_extraction_is_cached_across_requests(client, demo_pdf_bytes):
+    """第二次请求不应重新抽取（缓存生效），返回结构保持一致。"""
+    book = _upload(client, demo_pdf_bytes)
+    url = f"/api/books/{book['id']}/knowledge"
+
+    first = client.get(url).json()
+    second = client.get(url).json()
+
+    assert first == second
 
 
 def test_knowledge_map_unknown_book_404(client):

@@ -90,3 +90,23 @@ def extract_json(text: str) -> dict:
     if start == -1 or end == -1:
         raise LLMError("模型输出中未找到 JSON")
     return json.loads(s[start:end + 1])
+
+
+def extract_json_array(text: str) -> List[dict]:
+    """从模型输出中提取 JSON 数组（容忍 ```json 围栏与前后杂讯）。
+
+    与 tools/kb-agent 的 `_parse_json_array` 契约一致：非数组或非法 JSON 抛错，
+    调用方据此回退规则抽取。数组中非字典元素会被丢弃。
+    """
+    s = text.strip()
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", s)
+    if m:
+        s = m.group(1).strip()
+    start = s.find("[")
+    end = s.rfind("]")
+    if start == -1 or end <= start:
+        raise LLMError("模型输出中未找到 JSON 数组")
+    data = json.loads(s[start:end + 1])
+    if not isinstance(data, list):
+        raise LLMError("模型输出不是 JSON 数组")
+    return [item for item in data if isinstance(item, dict)]

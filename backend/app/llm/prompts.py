@@ -22,6 +22,27 @@ def lesson_user(chapter_title: str, chapter_text: str, anchors: list) -> str:
     )
 
 
+CONCEPT_SYSTEM = """你是教材知识点分析器。只依据用户提供的教材段落抽取「真正的知识点」
+（定义、概念、算法、方法、重要性质），不要抽取叙述/过渡句、例子细节、代码片段。
+规则：
+1. concept 是简短名词短语（中文不超过 16 字），例如「导数」「极限」「切线斜率」；
+2. definition 用一句话讲清它的含义；
+3. prerequisites 填该概念依赖的前置概念名数组（没有则给空数组）；
+4. example 是教材中体现它的简短例子，可空；
+5. anchors 是依据的段落锚点 id，只能从给定锚点清单里选，禁止编造；
+6. 输出严格 JSON 数组，每章不超过 12 条，不要输出 JSON 以外的任何文字。"""
+
+
+def concept_user(chapter_title: str, material: str, anchors: list) -> str:
+    anchor_lines = "\n".join(f"- {a['id']}" for a in anchors)
+    return (
+        f"请抽取「{chapter_title}」的知识点。\n"
+        f"教材段落（每行以 [锚点 id] 开头）：\n{material}\n\n"
+        f"可用锚点清单（anchors 只能取这里的 id）：\n{anchor_lines}\n\n"
+        "请按系统要求输出知识点 JSON 数组。"
+    )
+
+
 ASK_SYSTEM = """你是「AI讲师」，只能依据用户提供的教材片段回答当前问题。
 规则：
 1. 引用教材片段时，使用「编号」标注依据，例如 [1]；
