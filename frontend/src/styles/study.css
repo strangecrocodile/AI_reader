@@ -121,6 +121,104 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* ---------- 掌握度面板（由学习事件算出，可解释） ---------- */
+.mastery {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #dfe7d9;
+  background: #f6f8f2;
+}
+
+.mastery-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mastery-value {
+  font: 700 17px 'DM Mono', monospace;
+  color: var(--green);
+}
+
+.mastery-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 7px;
+}
+
+.mastery-status.learned {
+  background: #e2f0d7;
+  color: var(--green);
+}
+
+.mastery-status.learning {
+  background: #fff1d9;
+  color: #a8522e;
+}
+
+.mastery-status.planned {
+  background: #eef0ec;
+  color: var(--muted);
+}
+
+.mastery-track {
+  display: block;
+  height: 5px;
+  margin: 9px 0 10px;
+  background: #e6e5dd;
+}
+
+.mastery-track i {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  transition: width 0.3s ease;
+}
+
+.mastery-breakdown {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mastery-breakdown li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mastery-part {
+  font-family: 'DM Mono', monospace;
+  color: var(--ink);
+}
+
+.mastery-signals {
+  margin: 9px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.mastery-complete {
+  margin-top: 10px;
+  border: 1px solid var(--green);
+  background: #fffef9;
+  color: var(--green);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  width: 100%;
+}
+
+.mastery-complete:hover {
+  background: #eef6e7;
+}
+
 .tabs {
   display: flex;
   gap: 23px;

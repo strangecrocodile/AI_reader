@@ -18,28 +18,43 @@ export default function StudyPage() {
   const [selected, setSelected] = useState(null);
   const [chat, setChat] = useState([]);
   const [asking, setAsking] = useState(false);
+  const [progress, setProgress] = useState(null);
   const [focusId, setFocusId] = useState(null);
   const clearTimer = useRef(null);
+
+  /**
+   * 上报学习事件（进入章节 / 读到段落 / 提问 / 标记学完）。
+   * 掌握度由后端按事件算出并返回拆分说明；上报失败不打断学习。
+   */
+  const report = useCallback(
+    async (payload) => {
+      try {
+        const result = await api.recordLearningEvent({ bookId, chapterId, ...payload });
+        if (result) setProgress(result);
+        return result;
+      } catch {
+        return null;
+      }
+    },
+    [bookId, chapterId],
+  );
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setChat([]);
     setSelected(null);
+    setProgress(null);
     api.fetchStudyContent(bookId, chapterId).then((data) => {
       if (cancelled) return;
       setContent(data);
       setLoading(false);
-      if (data) {
-        api
-          .markChapterProgress({ bookId, chapterId, status: 'learning', mastery: 15 })
-          .catch(() => {});
-      }
+      if (data) report({ kind: 'open' });
     });
     return () => {
       cancelled = true;
     };
-  }, [bookId, chapterId]);
+  }, [bookId, chapterId, report]);
 
   // 锚点定位：设置 focusId，并在短暂高亮后自动清除
   const focusSource = useCallback(
@@ -65,6 +80,19 @@ export default function StudyPage() {
 
   const clearSelected = useCallback(() => setSelected(null), []);
 
+  /** 读到过的段落上报（Reader 的可见性观察结果）。 */
+  const handleRead = useCallback(
+    (anchorIds) => {
+      report({ kind: 'read', anchorIds });
+    },
+    [report],
+  );
+
+  const handleComplete = useCallback(async () => {
+    const result = await report({ kind: 'complete' });
+    toast(result ? '已标记本章学完' : '本章标记未同步，请稍后重试');
+  }, [report, toast]);
+
   const handleAsk = useCallback(
     async (question) => {
       const ctx = selected ? '（针对你选中的原文）' : undefined;
@@ -75,15 +103,14 @@ export default function StudyPage() {
         ...prev,
         { role: 'assistant', text: res.text, sources: res.sources, sourceDetails: res.sourceDetails },
       ]);
-      try {
-        await api.markChapterProgress({ bookId, chapterId, status: 'learning', mastery: 42 });
-      } catch {
+      const updated = await report({ kind: 'ask', question });
+      if (!updated) {
         toast('回答已完成，但学习进度暂时未同步');
       }
       setAsking(false);
       setSelected(null);
     },
-    [selected, bookId, chapterId, toast],
+    [selected, bookId, chapterId, report, toast],
   );
 
   if (loading) {
@@ -112,13 +139,15 @@ export default function StudyPage() {
     <section className="page study">
       <div className="mobile-warning">为便于演示「原文—讲解」联动，请在桌面宽度下体验完整界面。</div>
       <div className="study-layout">
-        <Reader content={content} focusId={focusId} onSelect={handleSelect} />
+        <Reader content={content} focusId={focusId} onSelect={handleSelect} onRead={handleRead} />
         <CoachPanel
           content={content}
           chat={chat}
           asking={asking}
           selected={selected}
+          progress={progress}
           onAsk={handleAsk}
+          onComplete={handleComplete}
           clearSelected={clearSelected}
           onFocusSource={focusSource}
         />

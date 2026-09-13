@@ -75,6 +75,24 @@ describe('api 后端模式（REST）', () => {
     );
   });
 
+  it('recordLearningEvent 上报学习事件并回传掌握度', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ status: 'learning', mastery: 20, computed: 20, breakdown: [], signals: {} }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      api.recordLearningEvent({ bookId: 'b1', chapterId: 'ch1', kind: 'read', anchorIds: ['s1'] }),
+    ).resolves.toMatchObject({ mastery: 20 });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://backend.test/api/books/b1/chapters/ch1/events');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toMatchObject({ kind: 'read', anchorIds: ['s1'] });
+  });
+
   it('ask 以 POST /api/ask 提交并映射 answer→text', async () => {
     configureApiBase('http://backend.test');
     const fetchMock = vi.fn(async () => ({

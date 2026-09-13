@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -9,8 +9,12 @@ import { BookProvider } from '../state/BookContext.jsx';
 import { ToastProvider } from '../state/ToastContext.jsx';
 
 beforeEach(() => {
-  // 隔离测试间共享的 localStorage（当前教材选择）
+  // 隔离测试间共享的 localStorage（当前教材选择 + 学习事件）
   localStorage.clear();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 function renderApp(initialEntries = ['/']) {
@@ -182,6 +186,79 @@ describe('学习页', () => {
 
     await user.click(screen.getByRole('button', { name: /平均变化率/ }));
     expect(document.getElementById('source-rate')).toHaveClass('focus');
+  });
+});
+
+describe('真实掌握度', () => {
+  /** 用可控的 IntersectionObserver 替身模拟「段落进入视口」。 */
+  function stubIntersectionObserver() {
+    const observers = [];
+    class FakeObserver {
+      constructor(callback) {
+        this.callback = callback;
+        this.nodes = [];
+        observers.push(this);
+      }
+
+      observe(node) {
+        this.nodes.push(node);
+      }
+
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+    return observers;
+  }
+
+  it('进入章节上报学习事件，掌握度从真实的 0 开始（不再是写死的数字）', async () => {
+    renderApp(['/study/calc7/ch2']);
+
+    expect(await screen.findByTestId('mastery-panel')).toBeInTheDocument();
+    expect(screen.getByText('掌握度 0%')).toBeInTheDocument();
+    expect(screen.getByText('学习中')).toBeInTheDocument();
+    expect(screen.getByText(/已读 0\/3 段 · 提问 0 次/)).toBeInTheDocument();
+  });
+
+  it('读到段落会累计覆盖度，掌握度随之上升', async () => {
+    const observers = stubIntersectionObserver();
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('mastery-panel');
+
+    const observer = observers.find((item) => item.nodes.length > 0);
+    expect(observer).toBeTruthy();
+    observer.callback(
+      ['source-rate', 'source-limit', 'source-tangent'].map((sourceId) => ({
+        isIntersecting: true,
+        target: { dataset: { sourceId } },
+      })),
+    );
+
+    await waitFor(() => expect(screen.getByText(/已读 3\/3 段/)).toBeInTheDocument());
+    expect(screen.getByText('掌握度 67%')).toBeInTheDocument();
+  });
+
+  it('提问计入互动度，掌握度按公式变化', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('mastery-panel');
+
+    await user.type(screen.getByLabelText('提问输入框'), '这段想表达什么？');
+    await user.click(screen.getByRole('button', { name: '提问' }));
+    await screen.findByTestId('answer', undefined, { timeout: 3000 });
+
+    await waitFor(() => expect(screen.getByText(/提问 1 次/)).toBeInTheDocument());
+    expect(screen.getByText('掌握度 7%')).toBeInTheDocument();
+  });
+
+  it('可以手动标记本章学完，状态变为已掌握', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('mastery-panel');
+
+    await user.click(screen.getByRole('button', { name: '标记本章学完' }));
+
+    await waitFor(() => expect(screen.getByText('已掌握')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: '标记本章学完' })).not.toBeInTheDocument();
   });
 });
 

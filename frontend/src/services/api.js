@@ -1,6 +1,7 @@
 import { books, studyContents } from '../data/books.js';
 import { knowledgeFor } from '../data/knowledge.js';
 import { answerFor } from './mockAnswers.js';
+import { recordLocalEvent } from './progress.js';
 
 /**
  * API 接口层：页面组件只依赖本模块。
@@ -110,7 +111,7 @@ export const api = {
     return structuredClone(knowledgeFor(bookId, readProgress(bookId)));
   },
 
-  /** 记录进入章节或完成问答等学习事件。 */
+  /** 记录进入章节或完成问答等学习事件（手动覆盖进度，正常学习请走 recordLearningEvent）。 */
   async markChapterProgress({ bookId, chapterId, status, mastery }) {
     if (useBackend()) {
       const data = await request(`/api/books/${bookId}/chapters/${chapterId}/progress`, {
@@ -128,6 +129,39 @@ export const api = {
     };
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
     return progress[bookId][chapterId];
+  },
+
+  /**
+   * 上报一次学习事件（open / read / ask / complete / quiz），返回重算后的掌握度。
+   * 掌握度由事件算出，前端不再自己编数字；演示模式用同一套公式在本地计算。
+   * @returns {Promise<{status: string, mastery: number, computed: number, breakdown: object[], signals: object}>}
+   */
+  async recordLearningEvent({ bookId, chapterId, kind, anchorIds, question, correct }) {
+    if (useBackend()) {
+      return request(`/api/books/${bookId}/chapters/${chapterId}/events`, {
+        method: 'POST',
+        body: JSON.stringify({
+          kind,
+          anchorIds: anchorIds ?? [],
+          question: question ?? null,
+          correct: correct ?? null,
+        }),
+      });
+    }
+    const result = recordLocalEvent(bookId, chapterId, { kind, anchorIds, question, correct });
+    const progress = readAllProgress();
+    progress[bookId] ??= {};
+    const previous = progress[bookId][chapterId];
+    progress[bookId][chapterId] = {
+      status: previous?.status === 'learned' ? 'learned' : result.status,
+      mastery: Math.max(previous?.mastery ?? 0, result.mastery),
+    };
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+    return {
+      ...result,
+      status: progress[bookId][chapterId].status,
+      mastery: progress[bookId][chapterId].mastery,
+    };
   },
 
   /**

@@ -4,9 +4,10 @@ import SegmentText from './SegmentText.jsx';
 
 /**
  * 教材原文阅读器：按「纸张」样式渲染段落与公式；
- * 支持拖选原文（onSelect）、锚点定位高亮（focusId）。
+ * 支持拖选原文（onSelect）、锚点定位高亮（focusId），
+ * 以及「读到过哪些段落」的可见性上报（onRead），用于计算真实掌握度。
  */
-export default function Reader({ content, focusId, onSelect }) {
+export default function Reader({ content, focusId, onSelect, onRead }) {
   const navigate = useNavigate();
   const paperRef = useRef(null);
 
@@ -18,6 +19,31 @@ export default function Reader({ content, focusId, onSelect }) {
     el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     return undefined;
   }, [focusId]);
+
+  // 可见性上报：段落进入视口即算「读过」（同一段只上报一次）
+  useEffect(() => {
+    if (!onRead || typeof IntersectionObserver === 'undefined') return undefined;
+    const nodes = paperRef.current?.querySelectorAll('[data-source-id]');
+    if (!nodes?.length) return undefined;
+    const reported = new Set();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const fresh = [];
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const anchorId = entry.target?.dataset?.sourceId;
+          if (anchorId && !reported.has(anchorId)) {
+            reported.add(anchorId);
+            fresh.push(anchorId);
+          }
+        }
+        if (fresh.length) onRead(fresh);
+      },
+      { threshold: 0.25, rootMargin: '0px 0px -10% 0px' },
+    );
+    nodes.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, [content, onRead]);
 
   const handleMouseUp = () => {
     const sel = window.getSelection();

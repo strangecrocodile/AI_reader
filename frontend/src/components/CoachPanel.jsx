@@ -3,8 +3,19 @@ import SegmentText from './SegmentText.jsx';
 
 /**
  * AI 讲解侧栏：顶部 Tab（AI 讲解 / 知识点大纲）+ 讲解内容 + 问答区。
+ * 顶部还展示由学习事件算出的掌握度及其构成（见 services/progress.js）。
  */
-export default function CoachPanel({ content, chat, asking, selected, onAsk, clearSelected, onFocusSource }) {
+export default function CoachPanel({
+  content,
+  chat,
+  asking,
+  selected,
+  progress,
+  onAsk,
+  onComplete,
+  clearSelected,
+  onFocusSource,
+}) {
   const [tab, setTab] = useState('explain');
 
   return (
@@ -12,6 +23,7 @@ export default function CoachPanel({ content, chat, asking, selected, onAsk, cle
       <div className="coach-head">
         <div className="eyebrow">本章学习助手</div>
         <h2>{content.heading}</h2>
+        <MasteryPanel progress={progress} onComplete={onComplete} />
         <div className="tabs" role="tablist">
           <button className={`tab${tab === 'explain' ? ' active' : ''}`} onClick={() => setTab('explain')} role="tab">
             AI 讲解
@@ -63,6 +75,46 @@ export default function CoachPanel({ content, chat, asking, selected, onAsk, cle
       </div>
       <AskBox selected={selected} asking={asking} onAsk={onAsk} onClear={clearSelected} />
     </aside>
+  );
+}
+
+/** 掌握度面板：数值 + 构成拆分 + 学习信号，全部来自真实事件。 */
+export function MasteryPanel({ progress, onComplete }) {
+  if (!progress) return null;
+  const { mastery, status, breakdown = [], signals = {}, note } = progress;
+  const statusText = status === 'learned' ? '已掌握' : status === 'learning' ? '学习中' : '待学习';
+
+  return (
+    <div className="mastery" data-testid="mastery-panel">
+      <div className="mastery-head">
+        <strong className="mastery-value">掌握度 {mastery}%</strong>
+        <span className={`mastery-status ${status}`}>{statusText}</span>
+      </div>
+      <span className="mastery-track" aria-hidden="true">
+        <i style={{ width: `${mastery}%` }} />
+      </span>
+      <ul className="mastery-breakdown" title={note}>
+        {breakdown.map((item) => (
+          <li key={item.key}>
+            <span>{item.label}</span>
+            <span className="mastery-part">
+              {item.weight ? `${item.score} / ${item.weight}` : '未计入'}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mastery-signals">
+        已读 {signals.paragraphsRead}/{signals.paragraphsTotal} 段 · 提问 {signals.askCount} 次
+        {signals.quizCount
+          ? ` · 自测 ${signals.quizCount} 题（正确率 ${Math.round((signals.quizAccuracy ?? 0) * 100)}%）`
+          : ''}
+      </p>
+      {status !== 'learned' && onComplete && (
+        <button className="mastery-complete" onClick={onComplete}>
+          标记本章学完
+        </button>
+      )}
+    </div>
   );
 }
 
