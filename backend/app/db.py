@@ -79,10 +79,30 @@ CREATE TABLE IF NOT EXISTS learning_events (
   value REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS threads (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  anchor_id TEXT NOT NULL DEFAULT '',
+  selected_text TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS thread_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  sources TEXT NOT NULL DEFAULT '[]',
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(book_id, chapter_id);
 CREATE INDEX IF NOT EXISTS idx_progress_book ON chapter_progress(book_id);
 CREATE INDEX IF NOT EXISTS idx_events_chapter ON learning_events(book_id, chapter_id);
+CREATE INDEX IF NOT EXISTS idx_threads_chapter ON threads(book_id, chapter_id);
+CREATE INDEX IF NOT EXISTS idx_thread_messages ON thread_messages(thread_id);
 """
 
 
@@ -293,6 +313,77 @@ class Database:
             ).fetchone()
             return {"payload": json.loads(row["payload"]), "model": row["model"]} if row else None
 
+    # ---------- 追问线程 ----------
+    def add_thread(self, thread: Dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO threads(id,book_id,chapter_id,anchor_id,selected_text,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    thread["id"],
+                    thread["book_id"],
+                    thread["chapter_id"],
+                    thread.get("anchor_id", ""),
+                    thread.get("selected_text", ""),
+                    thread["created_at"],
+                    thread.get("updated_at", thread["created_at"]),
+                ),
+            )
+
+    def get_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM threads WHERE id=?", (thread_id,)).fetchone()
+            return dict(row) if row else None
+
+    def threads_of_chapter(self, book_id: str, chapter_id: str) -> List[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM threads WHERE book_id=? AND chapter_id=? ORDER BY updated_at DESC, rowid DESC",
+                (book_id, chapter_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def touch_thread(self, thread_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE threads SET updated_at=? WHERE id=?", (_now(), thread_id))
+
+    def delete_thread(self, thread_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM threads WHERE id=?", (thread_id,))
+
+    def add_thread_message(
+        self,
+        thread_id: str,
+        role: str,
+        text: str,
+        sources: Optional[List[str]] = None,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO thread_messages(thread_id,role,text,sources,detail,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    thread_id,
+                    role,
+                    text,
+                    json.dumps(sources or [], ensure_ascii=False),
+                    json.dumps(detail or {}, ensure_ascii=False),
+                    _now(),
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM thread_messages WHERE id=?", (cursor.lastrowid,)
+            ).fetchone()
+            return dict(row)
+
+    def thread_messages(self, thread_id: str) -> List[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM thread_messages WHERE thread_id=? ORDER BY id", (thread_id,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     # ---------- 学习事件（掌握度依据） ----------
     def add_learning_event(
         self,
@@ -352,6 +443,7 @@ class Database:
 
 
 def _now() -> str:
+    """UTC 时间戳（微秒精度：线程「最近追问」排序需要秒内可区分）。"""
     from datetime import datetime, timezone
 
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")

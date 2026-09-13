@@ -6,8 +6,9 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from ..models import AskRequest, EventRequest, ProgressRequest
+from ..models import AskRequest, EventRequest, ProgressRequest, ThreadRequest
 from ..serializers import book_meta, chapter_content
+from ..services import threads as thread_service
 from ..services.ask import answer_question, stream_answer
 from ..services.ingest import SUPPORTED_MESSAGE, detect_format, ingest_file_bytes
 from ..services.knowledge import get_knowledge
@@ -138,31 +139,42 @@ def record_learning_event(
     )
 
 
+def _ask_targets(db, payload: AskRequest):
+    """解析检索目标：带线程时以线程所属章节为准（线程绑定原文所在章）。"""
+    if payload.threadId:
+        thread = thread_service.get_thread(db, payload.threadId)
+        if not thread:
+            raise HTTPException(status_code=404, detail="追问线程不存在")
+        if not db.get_book(thread["bookId"]) or not db.get_chapter(thread["bookId"], thread["chapterId"]):
+            raise HTTPException(status_code=404, detail="线程所属章节不存在")
+        return thread["bookId"], thread["chapterId"], thread
+    if not db.get_book(payload.bookId) or not db.get_chapter(payload.bookId, payload.chapterId):
+        raise HTTPException(status_code=404, detail="教材或章节不存在")
+    return payload.bookId, payload.chapterId, None
+
+
 @router.post("/api/ask")
 def ask(payload: AskRequest, request: Request):
     db, llm, retrieval, _ = _state(request)
-    book = db.get_book(payload.bookId)
-    chapter = db.get_chapter(payload.bookId, payload.chapterId)
-    if not book or not chapter:
-        raise HTTPException(status_code=404, detail="教材或章节不存在")
+    book_id, chapter_id, thread = _ask_targets(db, payload)
     return answer_question(
-        db, retrieval, llm, payload.bookId, payload.chapterId,
-        payload.question, payload.selectedText or "",
+        db, retrieval, llm, book_id, chapter_id,
+        payload.question, payload.selectedText or "", thread=thread,
     )
 
 
 @router.post("/api/ask/stream")
 def ask_stream(payload: AskRequest, request: Request):
-    """流式问答（SSE）：meta（检索范围与证据）→ delta（逐块回答）→ done（含溯源锚点）。"""
+    """流式问答（SSE）：meta（检索范围与证据）→ delta（逐块回答）→ done（含溯源锚点）。
+
+    带 `threadId` 时问答会写进该追问线程。
+    """
     db, llm, retrieval, _ = _state(request)
-    book = db.get_book(payload.bookId)
-    chapter = db.get_chapter(payload.bookId, payload.chapterId)
-    if not book or not chapter:
-        raise HTTPException(status_code=404, detail="教材或章节不存在")
+    book_id, chapter_id, thread = _ask_targets(db, payload)
 
     events = stream_answer(
-        db, retrieval, llm, payload.bookId, payload.chapterId,
-        payload.question, payload.selectedText or "",
+        db, retrieval, llm, book_id, chapter_id,
+        payload.question, payload.selectedText or "", thread=thread,
     )
 
     def frames():
@@ -179,6 +191,45 @@ def ask_stream(payload: AskRequest, request: Request):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/api/threads", status_code=201)
+def create_thread(payload: ThreadRequest, request: Request):
+    """为一段选中原文新建追问线程（划词气泡打开时调用）。"""
+    db, _, _, _ = _state(request)
+    if not db.get_book(payload.bookId):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    if not db.get_chapter(payload.bookId, payload.chapterId):
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return thread_service.create_thread(
+        db, payload.bookId, payload.chapterId, payload.anchorId, payload.selectedText
+    )
+
+
+@router.get("/api/books/{book_id}/chapters/{chapter_id}/threads")
+def list_threads(book_id: str, chapter_id: str, request: Request):
+    """本章的追问线程列表（最新的在前）。"""
+    db, _, _, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    return thread_service.list_threads(db, book_id, chapter_id)
+
+
+@router.get("/api/threads/{thread_id}")
+def get_thread(thread_id: str, request: Request):
+    db, _, _, _ = _state(request)
+    thread = thread_service.get_thread(db, thread_id)
+    if not thread:
+        raise HTTPException(status_code=404, detail="追问线程不存在")
+    return thread
+
+
+@router.delete("/api/threads/{thread_id}", status_code=204)
+def delete_thread(thread_id: str, request: Request):
+    db, _, _, _ = _state(request)
+    if not thread_service.delete_thread(db, thread_id):
+        raise HTTPException(status_code=404, detail="追问线程不存在")
+    return None
 
 
 @router.post("/api/books/{book_id}/plan")

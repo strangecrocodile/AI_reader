@@ -12,6 +12,17 @@ class AskRequest(BaseModel):
     bookId: str
     chapterId: str
     selectedText: Optional[str] = None
+    #: 可选：带线程时问答会写进该追问线程（检索范围以线程所属章节为准）
+    threadId: Optional[str] = None
+
+
+class ThreadRequest(BaseModel):
+    """新建追问线程：围绕一段选中原文。"""
+
+    bookId: str
+    chapterId: str
+    anchorId: str = ""
+    selectedText: str = Field(default="", max_length=1000)
 
 
 class ProgressRequest(BaseModel):

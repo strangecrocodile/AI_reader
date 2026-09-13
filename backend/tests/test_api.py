@@ -361,6 +361,148 @@ def test_ask_stream_unknown_book_404(client):
     assert resp.status_code == 404
 
 
+# ---------- 划词气泡 / 追问线程 ----------
+
+
+def _create_thread(client, book, chapter_id, **extra):
+    resp = client.post(
+        "/api/threads",
+        json={"bookId": book["id"], "chapterId": chapter_id, **extra},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_create_and_list_threads(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][0]
+
+    thread = _create_thread(
+        client, book, chapter["id"], anchorId="x", selectedText="比值 Δy / Δx 的极限存在"
+    )
+
+    assert thread["id"].startswith("th-")
+    assert thread["messages"] == []
+    assert thread["selectedText"] == "比值 Δy / Δx 的极限存在"
+
+    listed = client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}/threads").json()
+    assert [item["id"] for item in listed] == [thread["id"]]
+
+
+def test_create_thread_validates_book_and_chapter(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+
+    assert client.post("/api/threads", json={"bookId": "nope", "chapterId": "x"}).status_code == 404
+    assert (
+        client.post("/api/threads", json={"bookId": book["id"], "chapterId": "nope"}).status_code
+        == 404
+    )
+
+
+def test_ask_with_thread_persists_exchange(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][1]
+    thread = _create_thread(client, book, chapter["id"], selectedText="比值 Δy / Δx 的极限存在")
+
+    data = client.post(
+        "/api/ask",
+        json={
+            "question": "导数的定义是什么？",
+            "bookId": book["id"],
+            "chapterId": chapter["id"],
+            "selectedText": "比值 Δy / Δx 的极限存在",
+            "threadId": thread["id"],
+        },
+    ).json()
+
+    assert data["threadId"] == thread["id"]
+    stored = client.get(f"/api/threads/{thread['id']}").json()
+    assert [message["role"] for message in stored["messages"]] == ["user", "assistant"]
+    assert stored["messages"][0]["text"] == "导数的定义是什么？"
+    assert stored["messages"][1]["text"] == data["answer"]
+    assert stored["messages"][1]["sources"] == data["sources"]
+
+
+def test_ask_stream_with_thread_persists_answer(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][1]
+    thread = _create_thread(client, book, chapter["id"], selectedText="选中的原文")
+
+    resp = client.post(
+        "/api/ask/stream",
+        json={
+            "question": "导数的定义是什么？",
+            "bookId": book["id"],
+            "chapterId": chapter["id"],
+            "threadId": thread["id"],
+        },
+    )
+    frames = _sse_frames(resp.text)
+    done = frames[-1][1]
+    assert done["threadId"] == thread["id"]
+
+    stored = client.get(f"/api/threads/{thread['id']}").json()
+    assert [message["role"] for message in stored["messages"]] == ["user", "assistant"]
+    assert stored["messages"][1]["text"] == done["answer"]
+
+
+def test_thread_question_uses_thread_chapter_for_retrieval(client, demo_pdf_bytes):
+    """线程绑在第 2 章：即使请求里带的是第 1 章，也按线程所属章节检索。"""
+    book = _upload(client, demo_pdf_bytes)
+    first, second = book["chapters"][0], book["chapters"][1]
+    thread = _create_thread(client, book, second["id"], selectedText="比值 Δy / Δx 的极限存在")
+
+    data = client.post(
+        "/api/ask",
+        json={
+            "question": "导数的定义是什么？",
+            "bookId": book["id"],
+            "chapterId": first["id"],
+            "threadId": thread["id"],
+        },
+    ).json()
+
+    assert data["scope"] == "chapter"
+    assert all(item["chapterId"] == second["id"] for item in data["sourceDetails"])
+
+
+def test_ask_with_unknown_thread_404(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+
+    resp = client.post(
+        "/api/ask",
+        json={
+            "question": "导数是什么？",
+            "bookId": book["id"],
+            "chapterId": book["chapters"][0]["id"],
+            "threadId": "th-nope",
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_ask_without_thread_stays_stateless(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][0]
+
+    data = client.post(
+        "/api/ask",
+        json={"question": "极限是什么？", "bookId": book["id"], "chapterId": chapter["id"]},
+    ).json()
+
+    assert data["threadId"] is None
+    assert client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}/threads").json() == []
+
+
+def test_delete_thread(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    thread = _create_thread(client, book, book["chapters"][0]["id"], selectedText="待删除")
+
+    assert client.delete(f"/api/threads/{thread['id']}").status_code == 204
+    assert client.get(f"/api/threads/{thread['id']}").status_code == 404
+    assert client.delete(f"/api/threads/{thread['id']}").status_code == 404
+
+
 def test_plan_generation(client, demo_pdf_bytes):
     book = _upload(client, demo_pdf_bytes)
     resp = client.post(f"/api/books/{book['id']}/plan")

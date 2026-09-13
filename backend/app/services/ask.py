@@ -23,6 +23,7 @@ from ..db import Database
 from ..llm.client import LLMError
 from ..llm.prompts import ASK_SYSTEM, ask_user
 from ..rag.retrieval import NO_EVIDENCE_THRESHOLD, RetrievalService
+from . import threads as thread_service
 
 logger = logging.getLogger(__name__)
 
@@ -119,22 +120,38 @@ def answer_question(
     chapter_id: str,
     question: str,
     selected_text: str = "",
+    thread: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """一次性问答（非流式）。"""
+    """一次性问答（非流式）。带 thread 时把这一问一答写进追问线程。"""
     prepared = _retrieve(db, retrieval, book_id, chapter_id, question)
     if prepared is None:
-        return {"answer": NO_EVIDENCE_TEXT, "sources": [], "sourceDetails": [], "scope": "chapter"}
+        result = {"answer": NO_EVIDENCE_TEXT, "sources": [], "sourceDetails": [], "scope": "chapter"}
+        _persist_exchange(db, thread, question, result)
+        return {**result, "threadId": thread["id"] if thread else None}
 
     evidence = prepared["evidence"]
+    result: Optional[Dict[str, Any]] = None
     if llm.kind == "cloud":
         try:
             answer = (llm.chat(_messages(question, evidence, selected_text), temperature=0.2, max_tokens=900) or "").strip()
             if answer:
-                return _result(answer, evidence, prepared)
+                result = _result(answer, evidence, prepared)
         except (LLMError, KeyError, TypeError) as e:
             logger.warning("LLM 问答失败，回退规则答案: %s", e)
 
-    return _result(_rule_answer(question, evidence), evidence, prepared)
+    if result is None:
+        result = _result(_rule_answer(question, evidence), evidence, prepared)
+    _persist_exchange(db, thread, question, result)
+    return {**result, "threadId": thread["id"] if thread else None}
+
+
+def _persist_exchange(
+    db: Database, thread: Optional[Dict[str, Any]], question: str, result: Dict[str, Any]
+) -> None:
+    """线程模式下记录问答；未启用线程时保持无状态。"""
+    if thread is None:
+        return
+    thread_service.append_exchange(db, thread["id"], question, result)
 
 
 def stream_answer(
@@ -145,28 +162,36 @@ def stream_answer(
     chapter_id: str,
     question: str,
     selected_text: str = "",
+    thread: Optional[Dict[str, Any]] = None,
 ) -> Iterator[Dict[str, Any]]:
     """流式问答：产出 {event: meta|delta|done} 事件。
 
     - `meta`：检索范围与证据（前端可先提示「正在依据 N 段原文回答」）；
     - `delta`：回答片段，逐块追加；
     - `done`：完整回答 + 溯源锚点（由 [n] 反查，不信任模型自报）。
+
+    带 `thread` 时：问题在生成前先落库（流断了也不丢），回答在收尾时落库。
     """
+    if thread is not None:
+        thread_service.append_message(db, thread["id"], "user", question)
+
     prepared = _retrieve(db, retrieval, book_id, chapter_id, question)
     if prepared is None:
-        yield {
-            "event": "done",
+        result = {
             "answer": NO_EVIDENCE_TEXT,
             "sources": [],
             "sourceDetails": [],
             "scope": "chapter",
             "noEvidence": True,
         }
+        _persist_answer(db, thread, result)
+        yield {"event": "done", "threadId": thread["id"] if thread else None, **result}
         return
 
     evidence = prepared["evidence"]
     yield {
         "event": "meta",
+        "threadId": thread["id"] if thread else None,
         "scope": prepared["scope"],
         "evidenceCount": len(evidence),
         "sources": [item["anchor_id"] for item in evidence],
@@ -191,7 +216,23 @@ def stream_answer(
             yield {"event": "delta", "text": chunk}
         chunks = [answer]
 
-    yield {"event": "done", **_result("".join(chunks), evidence, prepared)}
+    result = _result("".join(chunks), evidence, prepared)
+    _persist_answer(db, thread, result)
+    yield {"event": "done", "threadId": thread["id"] if thread else None, **result}
+
+
+def _persist_answer(db: Database, thread: Optional[Dict[str, Any]], result: Dict[str, Any]) -> None:
+    if thread is None:
+        return
+    thread_service.append_message(
+        db,
+        thread["id"],
+        "assistant",
+        result.get("answer", ""),
+        sources=result.get("sources"),
+        source_details=result.get("sourceDetails"),
+        scope=result.get("scope", ""),
+    )
 
 
 def _chunk_text(text: str, size: int = STREAM_CHUNK_CHARS) -> List[str]:
