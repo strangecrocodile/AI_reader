@@ -3,11 +3,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
-from ..models import AskRequest, ProgressRequest
+from ..models import AskRequest, EventRequest, ProgressRequest
 from ..serializers import book_meta, chapter_content
 from ..services.ask import answer_question
 from ..services.ingest import SUPPORTED_MESSAGE, detect_format, ingest_file_bytes
 from ..services.knowledge import get_knowledge
+from ..services.progress import record_event
 
 router = APIRouter()
 
@@ -95,7 +96,7 @@ def get_book_knowledge(book_id: str, request: Request):
 def update_chapter_progress(
     book_id: str, chapter_id: str, payload: ProgressRequest, request: Request
 ):
-    """记录一次章节学习事件，并更新教材总进度。"""
+    """手动覆盖章节进度（调试/纠偏用）；正常学习进度请走 `/events`。"""
     db, _, _, _ = _state(request)
     if not db.get_book(book_id):
         raise HTTPException(status_code=404, detail="教材不存在")
@@ -106,6 +107,30 @@ def update_chapter_progress(
     )
     db.update_book_progress_from_chapters(book_id)
     return progress
+
+
+@router.post("/api/books/{book_id}/chapters/{chapter_id}/events")
+def record_learning_event(
+    book_id: str, chapter_id: str, payload: EventRequest, request: Request
+):
+    """上报一次学习事件（进入章节 / 读到段落 / 提问 / 标记学完 / 自测）。
+
+    掌握度由事件重算，返回值含 `breakdown`（各项权重与得分）与 `signals`（读数、提问数…）。
+    """
+    db, _, _, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    if not db.get_chapter(book_id, chapter_id):
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return record_event(
+        db,
+        book_id,
+        chapter_id,
+        payload.kind,
+        anchor_ids=payload.anchorIds,
+        question=payload.question or "",
+        correct=payload.correct,
+    )
 
 
 @router.post("/api/ask")

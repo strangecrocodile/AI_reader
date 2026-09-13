@@ -69,9 +69,20 @@ CREATE TABLE IF NOT EXISTS concepts (
   created_at TEXT NOT NULL,
   PRIMARY KEY (book_id, chapter_id)
 );
+CREATE TABLE IF NOT EXISTS learning_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  anchor_id TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  value REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(book_id, chapter_id);
 CREATE INDEX IF NOT EXISTS idx_progress_book ON chapter_progress(book_id);
+CREATE INDEX IF NOT EXISTS idx_events_chapter ON learning_events(book_id, chapter_id);
 """
 
 
@@ -281,6 +292,31 @@ class Database:
                 (book_id, chapter_id),
             ).fetchone()
             return {"payload": json.loads(row["payload"]), "model": row["model"]} if row else None
+
+    # ---------- 学习事件（掌握度依据） ----------
+    def add_learning_event(
+        self,
+        book_id: str,
+        chapter_id: str,
+        kind: str,
+        anchor_id: str = "",
+        detail: str = "",
+        value: float = 0.0,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO learning_events(book_id,chapter_id,kind,anchor_id,detail,value,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (book_id, chapter_id, kind, anchor_id, detail, value, _now()),
+            )
+
+    def learning_events_of(self, book_id: str, chapter_id: str) -> List[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM learning_events WHERE book_id=? AND chapter_id=? ORDER BY id",
+                (book_id, chapter_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # ---------- 知识点抽取（缓存） ----------
     def upsert_concepts(self, book_id: str, chapter_id: str, payload: Dict[str, Any], model: str) -> None:

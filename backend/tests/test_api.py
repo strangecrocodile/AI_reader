@@ -1,4 +1,5 @@
-"""API 集成测试：导入 → 列表 → 章节内容（讲解/大纲）→ 溯源问答 → 规划。"""
+"""API 集成测试：导入 → 列表 → 章节内容（讲解/大纲）→ 溯源问答 → 规划 → 掌握度事件。"""
+import pytest
 
 
 def _upload(client, data):
@@ -320,6 +321,65 @@ def test_knowledge_extraction_is_cached_across_requests(client, demo_pdf_bytes):
 
 def test_knowledge_map_unknown_book_404(client):
     resp = client.get("/api/books/nope/knowledge")
+    assert resp.status_code == 404
+
+
+def test_learning_events_recompute_mastery(client, demo_pdf_bytes):
+    """掌握度由真实事件算出：进入 → 阅读 → 提问，逐级变化并同步到知识点。"""
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][0]
+    content = client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()
+    anchors = [seg["id"] for para in content["paragraphs"] for seg in para.get("segs", [])]
+    url = f"/api/books/{book['id']}/chapters/{chapter['id']}/events"
+
+    opened = client.post(url, json={"kind": "open"}).json()
+    assert opened["status"] == "learning"
+    assert opened["mastery"] == 0, "只打开章节不该产生掌握度"
+
+    read = client.post(url, json={"kind": "read", "anchorIds": anchors[:2]}).json()
+    assert read["signals"]["paragraphsRead"] == 2
+    assert read["signals"]["paragraphsTotal"] == len(anchors)
+    assert read["mastery"] > opened["mastery"]
+    assert sum(item["score"] for item in read["breakdown"]) == pytest.approx(read["computed"], abs=0.5)
+
+    asked = client.post(url, json={"kind": "ask", "question": "这一段说了什么？"}).json()
+    assert asked["signals"]["askCount"] == 1
+    assert asked["mastery"] >= read["mastery"]
+
+    knowledge = client.get(f"/api/books/{book['id']}/knowledge").json()
+    concept = next(c for c in knowledge["concepts"] if c["chapterId"] == chapter["id"])
+    assert concept["status"] == "learning"
+    assert concept["mastery"] == asked["mastery"]
+
+
+def test_complete_event_marks_chapter_learned(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter_id = book["chapters"][0]["id"]
+    url = f"/api/books/{book['id']}/chapters/{chapter_id}/events"
+
+    done = client.post(url, json={"kind": "complete"}).json()
+
+    assert done["status"] == "learned"
+    assert done["signals"]["completed"] is True
+    assert client.get(f"/api/books/{book['id']}").json()["chapters"][0]["status"] == "learned"
+
+
+def test_learning_event_payload_validation(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    url = f"/api/books/{book['id']}/chapters/{book['chapters'][0]['id']}/events"
+
+    assert client.post(url, json={"kind": "read"}).status_code == 422
+    assert client.post(url, json={"kind": "read", "anchorIds": []}).status_code == 422
+    assert client.post(url, json={"kind": "ask", "question": "   "}).status_code == 422
+    assert client.post(url, json={"kind": "quiz"}).status_code == 422
+    assert client.post(url, json={"kind": "unknown"}).status_code == 422
+
+
+def test_learning_event_unknown_chapter_404(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+
+    resp = client.post(f"/api/books/{book['id']}/chapters/nope/events", json={"kind": "open"})
+
     assert resp.status_code == 404
 
 
