@@ -1,10 +1,12 @@
 """教材/章节/规划接口。"""
+from pathlib import Path
+
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from ..models import AskRequest, ProgressRequest
 from ..serializers import book_meta, chapter_content
 from ..services.ask import answer_question
-from ..services.ingest import ingest_pdf_bytes
+from ..services.ingest import SUPPORTED_MESSAGE, detect_format, ingest_file_bytes
 from ..services.knowledge import get_knowledge
 
 router = APIRouter()
@@ -42,16 +44,23 @@ async def upload_book(
     file: UploadFile = File(...),
     title: str = Form(""),
 ):
-    """上传文本型 PDF 教材：解析目录/章节/段落并入库。"""
+    """上传教材（PDF / Word / 纯文本）：解析目录/章节/段落并入库。"""
     db, llm, retrieval, _ = _state(request)
     filename = file.filename or ""
-    if not filename.lower().endswith(".pdf") and file.content_type != "application/pdf":
-        raise HTTPException(status_code=415, detail="目前只支持上传 PDF 文件")
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="文件为空")
+    if detect_format(filename, file.content_type) is None:
+        raise HTTPException(status_code=415, detail=SUPPORTED_MESSAGE)
+    fallback_title = title or Path(filename).stem or "未命名教材"
     try:
-        info = ingest_pdf_bytes(db, data, default_title=title or filename or "未命名教材")
+        info = ingest_file_bytes(
+            db,
+            data,
+            filename=filename,
+            content_type=file.content_type or "",
+            default_title=fallback_title,
+        )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"解析失败：{e}") from e
     retrieval.invalidate_book(info["id"])

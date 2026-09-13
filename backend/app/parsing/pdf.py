@@ -9,8 +9,16 @@
 """
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+from .base import (
+    ParsedBook,
+    ParsedChapter,
+    ParsedSection,
+    is_toc_noise,
+    looks_like_formula,
+    pick_heading_level,
+)
 
 try:
     import pymupdf as fitz  # PyMuPDF >= 1.24
@@ -23,14 +31,10 @@ HEADING_MAX_LEN = 40
 HEADING_MIN_SIZE_RATIO = 1.18
 HEADING_PAGE_HEIGHT = 120  # 页面前 1/12 视为页眉，忽略
 
-# 章标题模式（第1章 / 第1节 / Chapter 1 / Part 1 / 附录A）
+# 章标题模式（第1章 / 第1节 / Chapter 1 / Part 1 / 附录A）。
+# PDF 目录书签里「节」也可能单独成层，所以这里保留「节」；Word 大纲另有更细的层级可用。
 CHAPTER_TITLE_RE = re.compile(
     r"^\s*(第\s*[0-9一二三四五六七八九十百]+\s*[章节篇]|chapter\s*\d+|part\s*\d+|附录\s*[A-Za-zＡ-Ｚ])",
-    re.IGNORECASE,
-)
-# 不是正文章节的条目标题
-TOC_NOISE_RE = re.compile(
-    r"^(目\s*录|contents|cover|封面|书名页|版权页|索引|参考文献|后记|致谢)$",
     re.IGNORECASE,
 )
 # 目录点线引导符。要求足够长的连续点/省略号，避免误伤正文里的「……」「⋯⋯」
@@ -38,64 +42,13 @@ DOT_LEADER_RE = re.compile(r"(?:\.\s*){5,}|…{4,}|⋯{4,}")
 
 
 def _pick_chapter_level(toc) -> Optional[int]:
-    """从多层书签里挑出「章」所在的层级。
-
-    只取第 1 层是不够的：不少教材第 1 层是「部分 / 篇」，真正的章在第 2 层。
-    例如《神经网络与深度学习》第 1 层只有 5 个「部分」，第 2 层才是 20 章。
-
-    策略：优先选标题符合章模式的层（取最浅的一个）；否则退回条目数合理的最浅层。
-    """
+    """从多层书签里挑出「章」所在的层级（层级选择规则见 base.pick_heading_level）。"""
     by_level = defaultdict(list)
     for level, title, _page in toc:
         by_level[level].append(title)
     if not by_level:
         return None
-    # 1) 标题模式最匹配的层
-    for level in sorted(by_level):
-        titles = by_level[level]
-        hits = sum(1 for t in titles if CHAPTER_TITLE_RE.match(t))
-        if hits >= 3 and hits / len(titles) >= 0.5:
-            return level
-    # 2) 最浅层条目过少时（如第 1 层只有「目录」一项），改取条目数合理的更深层
-    shallowest = min(by_level)
-    if len(by_level[shallowest]) < 2:
-        for level in sorted(by_level):
-            if 3 <= len(by_level[level]) <= 80:
-                return level
-    # 3) 兜底：最浅层（保持原有行为，避免把只有两章的薄书拆错）
-    return shallowest
-
-
-def _is_toc_noise(title: str) -> bool:
-    """目录 / 封面 / 索引等条目不是正文章节。"""
-    return bool(TOC_NOISE_RE.match(title.strip()))
-
-
-@dataclass
-class ParsedSection:
-    seq: int
-    page: int
-    text: str
-    kind: str = "p"  # p | formula | heading
-
-
-@dataclass
-class ParsedChapter:
-    num: int
-    title: str
-    page_start: int
-    page_end: int
-    sections: List[ParsedSection] = field(default_factory=list)
-
-    @property
-    def full_text(self) -> str:
-        return "\n".join(s.text for s in self.sections if s.kind != "heading")
-
-
-@dataclass
-class ParsedBook:
-    title: str
-    chapters: List[ParsedChapter]
+    return pick_heading_level(dict(by_level), CHAPTER_TITLE_RE)
 
 
 def _strip_title_prefix(text: str, title: str) -> str:
@@ -108,15 +61,6 @@ def _strip_title_prefix(text: str, title: str) -> str:
         if count >= len(title_norm):
             return text[i + 1:].lstrip(" ")
     return text
-
-
-def _looks_like_formula(text: str) -> bool:
-    """无中日韩字符、包含数学符号、较短 → 视为公式行。"""
-    if len(text) > 80:
-        return False
-    if BIGRAM_RE.search(text):
-        return False
-    return bool(re.search(r"[=\u2211\u222b\u2192\u2264\u2265]|[a-zA-Z]\s*\(|x\^|_\{", text))
 
 
 # 句末标点。注意包含「．」(U+FF0E 全角句点)：不少中文教材（尤其理工类）用它作句号，
@@ -255,7 +199,7 @@ def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> Par
             level = _pick_chapter_level(toc)
             seen = set()
             for lv, title, page in toc:
-                if lv != level or _is_toc_noise(title):
+                if lv != level or is_toc_noise(title):
                     continue
                 pno = min(max(0, page - 1), n_pages - 1)
                 key = (pno, title.strip())
@@ -300,7 +244,7 @@ def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> Par
             margin_lines = _repeated_margin_lines(pages)
             for pno, text in zip(page_nos, pages):
                 for para in _split_paragraphs(text, skip_lines=margin_lines):
-                    kind = "formula" if _looks_like_formula(para) else "p"
+                    kind = "formula" if looks_like_formula(para) else "p"
                     seq += 1
                     ch.sections.append(ParsedSection(seq=seq, page=pno + 1, text=para, kind=kind))
             # 首段若以章节标题开头（提取时与正文合并），剥离标题

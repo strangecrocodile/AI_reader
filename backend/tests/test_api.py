@@ -25,12 +25,78 @@ def test_upload_and_list_books(client, demo_pdf_bytes):
     assert any(b["id"] == book["id"] for b in books)
 
 
-def test_upload_rejects_non_pdf(client):
+def test_upload_rejects_unsupported_format(client):
     resp = client.post(
         "/api/books",
-        files={"file": ("notes.txt", b"plain text", "text/plain")},
+        files={"file": ("scan.png", b"\x89PNG\r\n\x1a\n", "image/png")},
     )
     assert resp.status_code == 415
+    assert "docx" in resp.json()["detail"]
+
+
+def test_upload_docx_runs_full_chain(client, demo_docx_bytes):
+    """Word 教材与 PDF 共用同一条链路：入库 → 章节内容 → 知识图谱 → 溯源问答。"""
+    resp = client.post(
+        "/api/books",
+        files={
+            "file": (
+                "微积分入门.docx",
+                demo_docx_bytes,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    book = resp.json()
+    assert "微积分" in book["title"]
+    assert [c["title"] for c in book["chapters"]] == ["第1章 函数与极限", "第2章 导数与微分"]
+
+    chapter = book["chapters"][0]
+    content = client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()
+    assert content["paragraphs"], "Word 教材应解析出原文段落"
+    assert content["knowledgePoints"]
+    paragraph_ids = {seg["id"] for p in content["paragraphs"] for seg in p.get("segs", [])}
+    for point in content["knowledgePoints"]:
+        assert point["sourceId"] in paragraph_ids
+
+    knowledge = client.get(f"/api/books/{book['id']}/knowledge").json()
+    assert knowledge["concepts"]
+    assert all(concept["definition"] for concept in knowledge["concepts"])
+    assert all(concept["sourceId"] for concept in knowledge["concepts"])
+
+    asked = client.post(
+        "/api/ask",
+        json={"question": "这一段说了什么？", "bookId": book["id"], "chapterId": chapter["id"]},
+    ).json()
+    assert asked["answer"]
+    assert set(asked["sources"]) <= paragraph_ids
+
+
+def test_upload_markdown_book(client, demo_markdown_bytes):
+    resp = client.post(
+        "/api/books",
+        files={"file": ("微积分入门.md", demo_markdown_bytes, "text/markdown")},
+    )
+    assert resp.status_code == 201, resp.text
+    book = resp.json()
+    assert book["title"] == "微积分入门（Markdown 版）"
+    assert len(book["chapters"]) == 3
+
+    content = client.get(f"/api/books/{book['id']}/chapters/{book['chapters'][0]['id']}").json()
+    assert content["paragraphs"]
+    assert client.get(f"/api/books/{book['id']}/knowledge").json()["concepts"]
+
+
+def test_upload_txt_book_with_chinese_chapter_headings(client):
+    raw = "第1章 函数与极限\n极限是微积分中第一个重要的工具。\n第2章 导数与微分\n导数刻画变化率。\n".encode(
+        "utf-8"
+    )
+    resp = client.post("/api/books", files={"file": ("教材.txt", raw, "text/plain")})
+
+    assert resp.status_code == 201, resp.text
+    book = resp.json()
+    assert book["title"] == "教材"
+    assert [c["title"] for c in book["chapters"]] == ["第1章 函数与极限", "第2章 导数与微分"]
 
 
 def test_upload_rejects_empty_file(client):
