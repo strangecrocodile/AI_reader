@@ -13,6 +13,7 @@ export default function CoachPanel({
   progress,
   onAsk,
   onComplete,
+  onOpenSource,
   clearSelected,
   onFocusSource,
 }) {
@@ -71,7 +72,7 @@ export default function CoachPanel({
             ))}
           </div>
         )}
-        <Chat chat={chat} asking={asking} onFocusSource={onFocusSource} />
+        <Chat chat={chat} onOpenSource={onOpenSource} />
       </div>
       <AskBox selected={selected} asking={asking} onAsk={onAsk} onClear={clearSelected} />
     </aside>
@@ -118,9 +119,12 @@ export function MasteryPanel({ progress, onComplete }) {
   );
 }
 
-/** 问答对话流：用户气泡 + AI 回答（含教材依据锚点）。 */
-export function Chat({ chat, asking, onFocusSource }) {
-  if (chat.length === 0 && !asking) return null;
+/**
+ * 问答对话流：用户气泡 + AI 回答（流式逐块显示，结束后带教材依据锚点）。
+ * 依据可能来自其他章节，此时按钮会标出章节名，点击由 onOpenSource 决定是定位还是跳章。
+ */
+export function Chat({ chat, onOpenSource }) {
+  if (chat.length === 0) return null;
   return (
     <div className="chat show" data-testid="chat" aria-live="polite">
       {chat.map((msg, i) =>
@@ -130,17 +134,26 @@ export function Chat({ chat, asking, onFocusSource }) {
             {msg.context && <small className="ctx-note">{msg.context}</small>}
           </div>
         ) : (
-          <div key={i} className="bubble answer" data-testid="answer">
+          <div
+            key={i}
+            className="bubble answer"
+            data-testid="answer"
+            data-streaming={msg.streaming ? 'true' : undefined}
+          >
             <b>AI讲师</b>
             <br />
-            {msg.text}
+            {msg.text || (msg.streaming ? '正在思考…' : '')}
+            {msg.streaming && msg.text && <span className="stream-caret" aria-hidden="true" />}
+            {msg.scope === 'book' && !msg.streaming && (
+              <small className="scope-note">本章依据不足，已扩展到全书检索</small>
+            )}
             {msg.sources?.length > 0 && (
               <div className="answer-sources">
                 {msg.sources.map((sid) => (
                   <button
                     key={sid}
-                    className="source-chip"
-                    onClick={() => onFocusSource(sid)}
+                    className={`source-chip${isCrossChapter(sid, msg.sourceDetails) ? ' cross' : ''}`}
+                    onClick={() => onOpenSource(sid, findDetail(sid, msg.sourceDetails))}
                   >
                     {sourceLabel(sid, msg.sourceDetails)} ↖
                   </button>
@@ -150,20 +163,24 @@ export function Chat({ chat, asking, onFocusSource }) {
           </div>
         ),
       )}
-      {asking && (
-        <div className="bubble answer pending">
-          <b>AI讲师</b>
-          <br />
-          正在思考…
-        </div>
-      )}
     </div>
   );
 }
 
+function findDetail(sourceId, details = []) {
+  return details.find((item) => item.id === sourceId);
+}
+
+function isCrossChapter(sourceId, details = []) {
+  return Boolean(findDetail(sourceId, details)?.crossChapter);
+}
+
 function sourceLabel(sourceId, details = []) {
-  const detail = details.find((item) => item.id === sourceId);
-  if (detail?.page) return `教材依据 · 第 ${detail.page} 页`;
+  const detail = findDetail(sourceId, details);
+  if (detail?.page) {
+    const chapter = detail.crossChapter && detail.chapterTitle ? `${detail.chapterTitle} · ` : '';
+    return `教材依据 · ${chapter}第 ${detail.page} 页`;
+  }
   return `教材依据 ${sourceId.replace('source-', '#')}`;
 }
 

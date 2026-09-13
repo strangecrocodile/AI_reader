@@ -399,6 +399,30 @@
   color: var(--muted);
 }
 
+/* 流式回答：末尾光标 + 「已扩展到全书检索」提示 */
+.stream-caret {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  background: var(--green);
+  animation: caret-blink 1s step-end infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.scope-note {
+  display: block;
+  margin-top: 8px;
+  color: #a8522e;
+  font-size: 12px;
+}
+
 .answer-sources {
   margin-top: 10px;
   display: flex;
@@ -413,6 +437,13 @@
   border-radius: 999px;
   padding: 4px 11px;
   font-size: 12px;
+}
+
+.source-chip.cross {
+  border-style: dashed;
+  border-color: #cbbf9a;
+  background: #fffaf0;
+  color: #a8522e;
 }
 
 .source-chip:hover {

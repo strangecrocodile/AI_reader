@@ -312,12 +312,7 @@ describe('知识地图', () => {
 });
 
 describe('划词问答', () => {
-  it('拖选原文后提问，展示回答与教材依据', async () => {
-    const user = userEvent.setup();
-    renderApp(['/study/calc7/ch2']);
-    const paper = await screen.findByTestId('paper');
-
-    // 模拟拖选原文：对第一段创建选区并触发 mouseup
+  function selectFirstParagraph(paper) {
     const firstSpan = paper.querySelector('p .source');
     const range = document.createRange();
     range.selectNodeContents(firstSpan);
@@ -325,6 +320,15 @@ describe('划词问答', () => {
     sel.removeAllRanges();
     sel.addRange(range);
     fireEvent.mouseUp(paper);
+  }
+
+  it('拖选原文后提问，回答逐块补齐并附带教材依据', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+
+    // 模拟拖选原文：对第一段创建选区并触发 mouseup
+    selectFirstParagraph(paper);
 
     const label = screen.getByTestId('selection-label');
     expect(label).toHaveClass('show');
@@ -335,9 +339,25 @@ describe('划词问答', () => {
 
     const answer = await screen.findByTestId('answer', undefined, { timeout: 3000 });
     expect(answer).toHaveTextContent('AI讲师');
-    expect(answer).toHaveTextContent('Δy / Δx');
-    const chips = screen.getAllByRole('button', { name: /教材依据/ });
-    expect(chips.length).toBeGreaterThan(0);
+    await waitFor(() => expect(answer).toHaveTextContent('Δy / Δx'), { timeout: 3000 });
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /教材依据/ }).length).toBeGreaterThan(0),
+    );
+  });
+
+  it('回答以流式方式显示：先出现流式气泡，再逐块补齐', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+
+    await user.type(screen.getByLabelText('提问输入框'), '这段想表达什么？');
+    await user.click(screen.getByRole('button', { name: '提问' }));
+
+    const answer = await screen.findByTestId('answer');
+    expect(answer).toHaveAttribute('data-streaming');
+
+    await waitFor(() => expect(answer).not.toHaveAttribute('data-streaming'), { timeout: 3000 });
+    await waitFor(() => expect(answer).toHaveTextContent('Δy / Δx'));
   });
 
   it('提问回答后清除选中状态', async () => {
@@ -345,18 +365,48 @@ describe('划词问答', () => {
     renderApp(['/study/calc7/ch2']);
     const paper = await screen.findByTestId('paper');
 
-    const range = document.createRange();
-    const firstSpan = paper.querySelector('p .source');
-    range.selectNodeContents(firstSpan);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    fireEvent.mouseUp(paper);
+    selectFirstParagraph(paper);
 
     await user.type(screen.getByLabelText('提问输入框'), '为什么？');
     await user.click(screen.getByRole('button', { name: '提问' }));
 
-    await screen.findByTestId('answer', undefined, { timeout: 3000 });
-    expect(screen.getByTestId('selection-label')).not.toHaveClass('show');
+    await waitFor(
+      () => expect(screen.getByTestId('selection-label')).not.toHaveClass('show'),
+      { timeout: 3000 },
+    );
+  });
+
+  it('依据来自其他章节时标出章节名并可跳过去核对', async () => {
+    const user = userEvent.setup();
+    const streamSpy = vi.spyOn(api, 'askStream').mockImplementation(async (_params, handlers) => {
+      handlers.onDelta?.('导数定义见第 3 章 ');
+      handlers.onDone?.({
+        answer: '导数定义见第 3 章 [1]',
+        sources: ['source-limit'],
+        sourceDetails: [
+          {
+            id: 'source-limit',
+            page: 47,
+            text: '比值 Δy / Δx 的极限存在',
+            chapterId: 'ch3',
+            chapterTitle: '微分中值定理',
+          },
+        ],
+        scope: 'book',
+      });
+    });
+
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+    await user.type(screen.getByLabelText('提问输入框'), '导数的定义是什么？');
+    await user.click(screen.getByRole('button', { name: '提问' }));
+
+    await waitFor(() => expect(screen.getByText(/本章依据不足，已扩展到全书检索/)).toBeInTheDocument());
+    const chip = await screen.findByRole('button', { name: /微分中值定理 · 第 47 页/ });
+    await user.click(chip);
+
+    // 跳到对应章节（演示数据里 ch3 没有正文，显示占位页即可证明路由生效）
+    expect(await screen.findByText('本章内容尚未准备')).toBeInTheDocument();
+    streamSpy.mockRestore();
   });
 });

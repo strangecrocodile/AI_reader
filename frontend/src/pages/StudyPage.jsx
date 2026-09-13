@@ -93,16 +93,76 @@ export default function StudyPage() {
     toast(result ? '已标记本章学完' : '本章标记未同步，请稍后重试');
   }, [report, toast]);
 
+  /** 更新最后一条 AI 回答（流式追加 / 收尾）。 */
+  const patchLastAnswer = useCallback((patch) => {
+    setChat((prev) => {
+      const next = [...prev];
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        if (next[i].role === 'assistant') {
+          next[i] = typeof patch === 'function' ? patch(next[i]) : { ...next[i], ...patch };
+          break;
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  /** 标注哪条依据来自其他章节（用于提示与跳转）。 */
+  const withChapterFlags = useCallback(
+    (details = []) =>
+      details.map((detail) => ({
+        ...detail,
+        crossChapter: Boolean(detail.chapterId && detail.chapterId !== chapterId),
+      })),
+    [chapterId],
+  );
+
+  /** 点击「教材依据」：同章定位高亮，跨章跳到对应章节再定位。 */
+  const handleOpenSource = useCallback(
+    (sourceId, detail) => {
+      if (detail?.crossChapter && detail.chapterId) {
+        toast(`已跳到《${detail.chapterTitle}》核对原文`);
+        navigate(`/study/${bookId}/${detail.chapterId}?sourceId=${encodeURIComponent(sourceId)}`);
+        return;
+      }
+      focusSource(sourceId, detail?.page ? `教材依据 · 第 ${detail.page} 页` : undefined);
+    },
+    [bookId, focusSource, navigate, toast],
+  );
+
   const handleAsk = useCallback(
     async (question) => {
       const ctx = selected ? '（针对你选中的原文）' : undefined;
-      setChat((prev) => [...prev, { role: 'user', text: question, context: ctx }]);
-      setAsking(true);
-      const res = await api.ask({ question, selectedText: selected?.text, bookId, chapterId });
       setChat((prev) => [
         ...prev,
-        { role: 'assistant', text: res.text, sources: res.sources, sourceDetails: res.sourceDetails },
+        { role: 'user', text: question, context: ctx },
+        { role: 'assistant', text: '', streaming: true, sources: [], sourceDetails: [] },
       ]);
+      setAsking(true);
+      try {
+        await api.askStream(
+          { question, selectedText: selected?.text, bookId, chapterId },
+          {
+            onDelta: (chunk) => patchLastAnswer((msg) => ({ ...msg, text: msg.text + chunk })),
+            onDone: (payload) =>
+              patchLastAnswer((msg) => ({
+                ...msg,
+                streaming: false,
+                text: payload.answer ?? msg.text,
+                sources: payload.sources ?? [],
+                sourceDetails: withChapterFlags(payload.sourceDetails),
+                scope: payload.scope,
+              })),
+          },
+        );
+      } catch {
+        patchLastAnswer((msg) => ({
+          ...msg,
+          streaming: false,
+          failed: true,
+          text: msg.text || '回答失败，请稍后重试',
+        }));
+      }
       const updated = await report({ kind: 'ask', question });
       if (!updated) {
         toast('回答已完成，但学习进度暂时未同步');
@@ -110,7 +170,7 @@ export default function StudyPage() {
       setAsking(false);
       setSelected(null);
     },
-    [selected, bookId, chapterId, report, toast],
+    [selected, bookId, chapterId, patchLastAnswer, withChapterFlags, report, toast],
   );
 
   if (loading) {
@@ -148,6 +208,7 @@ export default function StudyPage() {
           progress={progress}
           onAsk={handleAsk}
           onComplete={handleComplete}
+          onOpenSource={handleOpenSource}
           clearSelected={clearSelected}
           onFocusSource={focusSource}
         />

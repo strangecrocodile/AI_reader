@@ -180,7 +180,94 @@ export const api = {
     await delay(350); // 模拟模型推理耗时
     return answerFor(question, { selectedText });
   },
+
+  /**
+   * 流式提问：后端走 SSE（`POST /api/ask/stream`），演示模式在本地分块模拟，
+   * 两条路径都通过 onDelta/onDone 回报，页面渲染逻辑只写一份。
+   *
+   * @param {{ question: string, selectedText?: string, bookId: string, chapterId: string }} params
+   * @param {{ onDelta?: (text: string) => void, onDone?: (payload: object) => void, signal?: AbortSignal }} handlers
+   */
+  async askStream({ question, selectedText, bookId, chapterId }, handlers = {}) {
+    const { onDelta, onDone, signal } = handlers;
+    if (!useBackend()) {
+      const result = answerFor(question, { selectedText });
+      for (const chunk of chunkText(result.text)) {
+        if (signal?.aborted) return;
+        onDelta?.(chunk);
+        await delay(DEMO_STREAM_INTERVAL);
+      }
+      onDone?.({
+        answer: result.text,
+        sources: result.sources ?? [],
+        sourceDetails: [],
+        scope: 'chapter',
+      });
+      return;
+    }
+
+    const res = await fetch(`${apiBase}/api/ask/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ question, bookId, chapterId, selectedText: selectedText || null }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`API ${res.status}: /api/ask/stream`);
+    }
+    await readEventStream(res.body, { onDelta, onDone });
+  },
 };
+
+const DEMO_STREAM_CHUNK = 8;
+const DEMO_STREAM_INTERVAL = 45;
+
+function chunkText(text, size = DEMO_STREAM_CHUNK) {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size));
+  return chunks.length ? chunks : [''];
+}
+
+/** 解析一个 SSE 帧（`event: x\ndata: {...}`）→ {event, data}。 */
+function parseEventFrame(frame) {
+  let event = 'message';
+  let data = '';
+  for (const line of frame.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  try {
+    return { event, data: JSON.parse(data) };
+  } catch {
+    return null;
+  }
+}
+
+/** 读取 fetch 的 SSE 流：meta → delta* → done（或 error）。 */
+async function readEventStream(body, { onDelta, onDone } = {}) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        const parsed = parseEventFrame(frame);
+        if (!parsed) continue;
+        if (parsed.event === 'delta') onDelta?.(parsed.data.text ?? '');
+        else if (parsed.event === 'done') onDone?.(parsed.data);
+        else if (parsed.event === 'error') throw new Error(parsed.data.message || '流式回答失败');
+      }
+    }
+  } finally {
+    reader.cancel?.().catch(() => {});
+  }
+}
 
 function readAllProgress() {
   try {

@@ -109,6 +109,43 @@ describe('api 后端模式（REST）', () => {
     expect(JSON.parse(init.body)).toMatchObject({ question: '导数是什么？', bookId: 'b1', chapterId: 'ch2' });
   });
 
+  it('askStream 解析 SSE 帧并把增量与最终结果回调出去', async () => {
+    configureApiBase('http://backend.test');
+    const frames = [
+      'event: meta\ndata: {"event":"meta","scope":"book","evidenceCount":2}\n\n',
+      'event: delta\ndata: {"event":"delta","text":"导数"}\n\n',
+      'event: delta\ndata: {"event":"delta","text":"是变化率"}\n\n',
+      'event: done\ndata: {"event":"done","answer":"导数是变化率","sources":["s1"],"sourceDetails":[{"id":"s1","page":3}],"scope":"book"}\n\n',
+    ];
+    const encoder = new TextEncoder();
+    let index = 0;
+    const body = {
+      getReader: () => ({
+        read: async () =>
+          index < frames.length
+            ? { value: encoder.encode(frames[index++]), done: false }
+            : { value: undefined, done: true },
+        cancel: async () => {},
+      }),
+    };
+    const fetchMock = vi.fn(async () => ({ ok: true, body }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const deltas = [];
+    let done = null;
+    await api.askStream(
+      { question: '导数是什么？', bookId: 'b1', chapterId: 'ch2' },
+      { onDelta: (text) => deltas.push(text), onDone: (payload) => { done = payload; } },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://backend.test/api/ask/stream',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(deltas.join('')).toBe('导数是变化率');
+    expect(done).toMatchObject({ answer: '导数是变化率', sources: ['s1'], scope: 'book' });
+  });
+
   it('未配置后端时维持演示模式（不发起网络请求）', async () => {
     configureApiBase('');
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => [] }));
