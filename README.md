@@ -135,7 +135,7 @@ $env:PYTHONPATH = 'src'
 cd backend
 .venv\Scripts\python.exe -m pytest
 
-# 前端：69 项
+# 前端：76 项
 cd frontend
 npm test
 
@@ -183,6 +183,12 @@ cd tools\kb-agent
 
 **页面能打开，但列表是示例数据、无法上传 PDF？**
 `frontend\.env` 未创建或 `VITE_API_BASE_URL` 为空，前端处于内置演示数据模式。按「首次安装 · 第 2 步」创建 `.env`，再重启 `npm run dev`。
+
+**打开页面一直转圈，或提示「连不上教材服务」？**
+后端没起来或地址不对。按「日常调试启动 · 终端 1」启动后端，确认 http://localhost:8000/api/health 能打开，并检查 `frontend\.env` 的 `VITE_API_BASE_URL`。页面上的「重试」可直接重连，无需刷新。
+
+**还没导入教材时打开首页看到什么？**
+会看到「还没有教材」的引导：点「上传教材」即可；也可以先在 `backend` 目录执行 `scripts\make_demo_pdf.py` 生成团队原创的示例教材再刷新。知识地图页同样会给引导，不会一直空白或转圈。
 
 **讲解和回答偏模板化？**
 `backend\.env` 没配 `LLM_API_KEY`，后端在用规则回退。填入 DeepSeek Key 后重启后端即切换为真实推理（`/api/health` 的 `llm` 会变成 `cloud`）。
