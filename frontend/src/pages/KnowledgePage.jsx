@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import StateCard from '../components/StateCard.jsx';
 import { api } from '../services/api.js';
 import { useBooks } from '../state/BookContext.jsx';
 
@@ -31,6 +32,7 @@ export default function KnowledgePage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +56,7 @@ export default function KnowledgePage() {
     return () => {
       cancelled = true;
     };
-  }, [currentBookId]);
+  }, [currentBookId, reloadKey]);
 
   const selected = useMemo(
     () => data?.concepts?.find((concept) => concept.id === selectedId) ?? data?.concepts?.[0],
@@ -66,16 +68,28 @@ export default function KnowledgePage() {
     [data],
   );
 
+  if (!currentBookId) {
+    return (
+      <section className="page active knowledge-page">
+        <StateCard
+          title="还没有教材"
+          description="知识地图由教材里的知识点聚合而来，先上传一本教材再回来看看。"
+          actionLabel="去上传教材"
+          onAction={() => navigate('/')}
+        />
+      </section>
+    );
+  }
+
   if (error) {
     return (
       <section className="page active knowledge-page">
-        <div className="placeholder-card">
-          <h2>知识地图暂时不可用</h2>
-          <p>知识点整理没有完成，请稍后重试。</p>
-          <button className="back-home" onClick={() => window.location.reload()}>
-            重新加载
-          </button>
-        </div>
+        <StateCard
+          title="知识地图暂时不可用"
+          description="知识点整理没有完成。可能是后端未启动或接口出错，可以重试一次。"
+          actionLabel="重试"
+          onAction={() => setReloadKey((key) => key + 1)}
+        />
       </section>
     );
   }

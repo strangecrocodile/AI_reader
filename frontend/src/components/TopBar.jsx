@@ -15,7 +15,9 @@ export default function TopBar() {
         <Link to="/knowledge" className={`nav-link${location.pathname === '/knowledge' ? ' active' : ''}`}>
           知识地图
         </Link>
-        <span className="nav-link">学习报告</span>
+        <span className="nav-link soon" aria-disabled="true" title="学习报告正在开发中">
+          学习报告<em>即将上线</em>
+        </span>
       </nav>
       <div className="avatar">zhang</div>
     </header>

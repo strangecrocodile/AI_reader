@@ -100,6 +100,25 @@ button {
   cursor: pointer;
 }
 
+/* 尚未实现的入口：明确标出「即将上线」，不做成点了没反应的死链接 */
+.nav-link.soon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.8;
+  cursor: not-allowed;
+  user-select: none;
+}
+
+.nav-link.soon em {
+  font-style: normal;
+  font-size: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--muted);
+}
+
 .avatar {
   width: 48px;
   height: 48px;
@@ -169,6 +188,44 @@ h3 {
   color: var(--muted);
   padding: 120px 0;
   font-size: 15px;
+}
+
+/* ---------- 空态 / 错误态 / 404 卡片 ---------- */
+.state-card {
+  text-align: center;
+}
+
+.state-card .eyebrow {
+  margin-bottom: 6px;
+}
+
+.state-hint {
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--soft);
+  border: 1px dashed var(--line);
+  padding: 10px 12px;
+  word-break: break-all;
+}
+
+.state-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.back-home {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.back-home.ghost {
+  background: transparent;
+  color: var(--green);
+  border: 1px solid var(--green);
+  padding: 11px 17px;
 }
 
 /* ---------- 全局提示 ---------- */

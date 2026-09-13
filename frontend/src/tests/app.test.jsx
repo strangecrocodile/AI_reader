@@ -15,6 +15,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function renderApp(initialEntries = ['/']) {
@@ -509,5 +510,76 @@ describe('划词气泡与追问线程', () => {
     await user.click(screen.getByRole('button', { name: /删除线程/ }));
 
     await waitFor(() => expect(screen.queryByTestId('thread-list')).not.toBeInTheDocument());
+  });
+});
+
+describe('空态与异常兜底', () => {
+  it('没有任何教材时主页给出上传引导，而不是白屏', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'fetchBooks').mockResolvedValue([]);
+
+    renderApp(['/']);
+
+    expect(await screen.findByText('还没有教材')).toBeInTheDocument();
+    expect(screen.getByText(/make_demo_pdf\.py/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '上传教材' }));
+    expect(screen.getByText('更换教材')).toBeInTheDocument();
+  });
+
+  it('教材接口失败时给出错误态，重试成功后恢复', async () => {
+    const user = userEvent.setup();
+    const spy = vi.spyOn(api, 'fetchBooks').mockRejectedValueOnce(new Error('后端没起来'));
+
+    renderApp(['/']);
+
+    expect(await screen.findByText('连不上教材服务')).toBeInTheDocument();
+    expect(screen.getByText(/后端没起来/)).toBeInTheDocument();
+
+    spy.mockResolvedValueOnce(mockBooks);
+    await user.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(await screen.findByText('正在学习的教材')).toBeInTheDocument();
+  });
+
+  it('没有教材时知识地图给出引导，而不是一直转圈', async () => {
+    vi.spyOn(api, 'fetchBooks').mockResolvedValue([]);
+
+    renderApp(['/knowledge']);
+
+    expect(await screen.findByText('还没有教材')).toBeInTheDocument();
+    expect(screen.queryByText('正在整理知识地图…')).not.toBeInTheDocument();
+  });
+
+  it('未知地址显示 404 页，而不是空白', async () => {
+    renderApp(['/does-not-exist']);
+
+    expect(await screen.findByText('这个页面不存在')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '返回学习计划' })).toBeInTheDocument();
+  });
+
+  it('顶栏「学习报告」标为即将上线，不做成死链接', async () => {
+    renderApp(['/']);
+    await screen.findByText('正在学习的教材');
+
+    const item = screen.getByText('学习报告');
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item.closest('a')).toBeNull();
+    expect(screen.getByText('即将上线')).toBeInTheDocument();
+  });
+
+  it('后端返回 learned 的章节也显示已完成标记', async () => {
+    const learnedBook = {
+      ...mockBooks[0],
+      chapters: mockBooks[0].chapters.map((chapter, index) =>
+        index === 0 ? { ...chapter, status: 'learned', meta: '已完成' } : chapter,
+      ),
+    };
+    vi.spyOn(api, 'fetchBooks').mockResolvedValue([learnedBook]);
+
+    renderApp(['/']);
+
+    await screen.findByText('正在学习的教材');
+    expect(screen.getByText('✓')).toBeInTheDocument();
   });
 });
