@@ -450,6 +450,180 @@
   background: #e2f0d7;
 }
 
+/* ---------- 划词气泡：锚定在选区旁的追问浮层 ---------- */
+.selection-pill {
+  position: fixed;
+  z-index: 40;
+  border: 0;
+  background: var(--ink);
+  color: #fff;
+  padding: 8px 12px;
+  max-width: 320px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 6px 16px rgba(29, 45, 39, 0.22);
+}
+
+.selection-pill:hover {
+  background: var(--green);
+}
+
+.selection-panel {
+  position: fixed;
+  z-index: 50;
+  width: 380px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: #fffef9;
+  border: 1px solid var(--green);
+  box-shadow: 0 12px 30px rgba(29, 45, 39, 0.22);
+}
+
+.selection-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--ink);
+  color: #fff;
+  cursor: grab;
+  user-select: none;
+}
+
+.selection-panel-head:active {
+  cursor: grabbing;
+}
+
+.selection-quote {
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.selection-close {
+  border: 0;
+  background: none;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.selection-panel-body {
+  flex: 1;
+  min-height: 90px;
+  overflow: auto;
+  padding: 12px 14px;
+}
+
+.selection-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.selection-ask {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.selection-ask input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.selection-ask button {
+  border: 0;
+  background: var(--green);
+  color: #fff;
+  padding: 8px 12px;
+  font-weight: 700;
+}
+
+/* ---------- 追问线程列表 ---------- */
+.thread-list {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  background: #fafbf7;
+}
+
+.thread-list-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.thread-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-list li {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #eef0ec;
+}
+
+.thread-list li:last-child {
+  border-bottom: 0;
+}
+
+.thread-list li.active {
+  background: #eef6e7;
+}
+
+.thread-open {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 9px 10px;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+
+.thread-title {
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.thread-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.thread-delete {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 15px;
+}
+
+.thread-delete:hover {
+  color: #a8522e;
+}
+
 /* ---------- 占位页 ---------- */
 .placeholder-page {
   display: block;

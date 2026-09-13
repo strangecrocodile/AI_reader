@@ -2,11 +2,29 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Reader from '../components/Reader.jsx';
 import CoachPanel from '../components/CoachPanel.jsx';
+import SelectionBubble from '../components/SelectionBubble.jsx';
 import { api } from '../services/api.js';
 import { truncate } from '../utils/text.js';
 import { useToast } from '../state/ToastContext.jsx';
 
-/** 学习页：左栏教材原文 + 右栏 AI 讲解与问答。 */
+/** 本地消息 id（后端持久化用自己的 id，这里只用于 React key 与流式定位）。 */
+let messageSeq = 0;
+function nextMessageId(role) {
+  messageSeq += 1;
+  return `${role}-m${messageSeq}`;
+}
+
+const TITLE_CHARS = 24;
+
+/** 无选中原文的线程：标题取第一个问题（与后端 services/threads.py 的规则一致）。 */
+function threadTitleFrom(thread, question) {
+  if (thread.selectedText) return thread.title;
+  if ((thread.messages ?? []).some((message) => message.role === 'user')) return thread.title;
+  const text = String(question || '').trim().replace(/\s+/g, ' ');
+  return text.length <= TITLE_CHARS ? text : `${text.slice(0, TITLE_CHARS)}…`;
+}
+
+/** 学习页：左栏教材原文 + 右栏 AI 讲解，划词可就该段原文开一条追问线程。 */
 export default function StudyPage() {
   const { bookId, chapterId } = useParams();
   const [searchParams] = useSearchParams();
@@ -16,11 +34,16 @@ export default function StudyPage() {
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
-  const [chat, setChat] = useState([]);
+  const [threads, setThreads] = useState([]);
+  const [activeThreadId, setActiveThreadId] = useState(null);
+  const [bubbleOpen, setBubbleOpen] = useState(false);
+  const [bubbleRect, setBubbleRect] = useState(null);
   const [asking, setAsking] = useState(false);
   const [progress, setProgress] = useState(null);
   const [focusId, setFocusId] = useState(null);
   const clearTimer = useRef(null);
+
+  const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
 
   /**
    * 上报学习事件（进入章节 / 读到段落 / 提问 / 标记学完）。
@@ -42,14 +65,23 @@ export default function StudyPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setChat([]);
     setSelected(null);
     setProgress(null);
+    setThreads([]);
+    setActiveThreadId(null);
+    setBubbleOpen(false);
     api.fetchStudyContent(bookId, chapterId).then((data) => {
       if (cancelled) return;
       setContent(data);
       setLoading(false);
-      if (data) report({ kind: 'open' });
+      if (!data) return;
+      report({ kind: 'open' });
+      api
+        .fetchThreads(bookId, chapterId)
+        .then((list) => {
+          if (!cancelled && Array.isArray(list)) setThreads(list);
+        })
+        .catch(() => {});
     });
     return () => {
       cancelled = true;
@@ -74,8 +106,16 @@ export default function StudyPage() {
     }
   }, [content, searchParams, focusSource]);
 
-  const handleSelect = useCallback((text) => {
-    setSelected({ text, truncated: truncate(text) });
+  const handleSelect = useCallback((text, meta = {}) => {
+    setSelected({
+      text,
+      truncated: truncate(text),
+      anchorId: meta.anchorId ?? '',
+      rect: meta.rect ?? null,
+    });
+    // 选中新原文时收起浮层：下一次提问会为新选区另开一条线程
+    setBubbleOpen(false);
+    setActiveThreadId(null);
   }, []);
 
   const clearSelected = useCallback(() => setSelected(null), []);
@@ -93,19 +133,55 @@ export default function StudyPage() {
     toast(result ? '已标记本章学完' : '本章标记未同步，请稍后重试');
   }, [report, toast]);
 
-  /** 更新最后一条 AI 回答（流式追加 / 收尾）。 */
-  const patchLastAnswer = useCallback((patch) => {
-    setChat((prev) => {
-      const next = [...prev];
-      for (let i = next.length - 1; i >= 0; i -= 1) {
-        if (next[i].role === 'assistant') {
-          next[i] = typeof patch === 'function' ? patch(next[i]) : { ...next[i], ...patch };
-          break;
-        }
+  // ---------- 追问线程 ----------
+
+  /** 打开划词气泡：没有活动线程时先建一条（绑定选中原文的锚点）。 */
+  const handleOpenBubble = useCallback(async () => {
+    setBubbleRect(selected?.rect ?? null);
+    if (!activeThreadId) {
+      try {
+        const created = await api.createThread({
+          bookId,
+          chapterId,
+          anchorId: selected?.anchorId ?? '',
+          selectedText: selected?.text ?? '',
+        });
+        setThreads((prev) => [created, ...prev]);
+        setActiveThreadId(created.id);
+      } catch {
+        toast('追问线程创建失败，请稍后重试');
+        return;
       }
-      return next;
-    });
+    }
+    setBubbleOpen(true);
+  }, [activeThreadId, bookId, chapterId, selected, toast]);
+
+  const handleCloseBubble = useCallback(() => setBubbleOpen(false), []);
+
+  const patchThreadMessages = useCallback((threadId, patch) => {
+    setThreads((prev) =>
+      prev.map((thread) =>
+        thread.id === threadId ? { ...thread, messages: patch(thread.messages ?? []) } : thread,
+      ),
+    );
   }, []);
+
+  /** 更新线程里最后一条 AI 回答（流式追加 / 收尾）。 */
+  const patchLastAnswer = useCallback(
+    (threadId, patch) => {
+      patchThreadMessages(threadId, (messages) => {
+        const next = [...messages];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].role === 'assistant') {
+            next[i] = typeof patch === 'function' ? patch(next[i]) : { ...next[i], ...patch };
+            break;
+          }
+        }
+        return next;
+      });
+    },
+    [patchThreadMessages],
+  );
 
   /** 标注哪条依据来自其他章节（用于提示与跳转）。 */
   const withChapterFlags = useCallback(
@@ -130,22 +206,49 @@ export default function StudyPage() {
     [bookId, focusSource, navigate, toast],
   );
 
-  const handleAsk = useCallback(
-    async (question) => {
-      const ctx = selected ? '（针对你选中的原文）' : undefined;
-      setChat((prev) => [
-        ...prev,
-        { role: 'user', text: question, context: ctx },
-        { role: 'assistant', text: '', streaming: true, sources: [], sourceDetails: [] },
-      ]);
+  const askInThread = useCallback(
+    async (threadId, question, contextText) => {
+      const stamp = new Date().toISOString();
+      setThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId
+            ? {
+                ...thread,
+                updatedAt: stamp,
+                title: threadTitleFrom(thread, question),
+                messages: [
+                  ...(thread.messages ?? []),
+                  {
+                    id: nextMessageId('user'),
+                    role: 'user',
+                    text: question,
+                    context: contextText ? '（针对你选中的原文）' : undefined,
+                    createdAt: stamp,
+                  },
+                  {
+                    id: nextMessageId('assistant'),
+                    role: 'assistant',
+                    text: '',
+                    streaming: true,
+                    sources: [],
+                    sourceDetails: [],
+                    createdAt: stamp,
+                  },
+                ],
+              }
+            : thread,
+        ),
+      );
+
       setAsking(true);
       try {
         await api.askStream(
-          { question, selectedText: selected?.text, bookId, chapterId },
+          { question, selectedText: contextText, bookId, chapterId, threadId },
           {
-            onDelta: (chunk) => patchLastAnswer((msg) => ({ ...msg, text: msg.text + chunk })),
+            onDelta: (chunk) =>
+              patchLastAnswer(threadId, (msg) => ({ ...msg, text: msg.text + chunk })),
             onDone: (payload) =>
-              patchLastAnswer((msg) => ({
+              patchLastAnswer(threadId, (msg) => ({
                 ...msg,
                 streaming: false,
                 text: payload.answer ?? msg.text,
@@ -156,7 +259,7 @@ export default function StudyPage() {
           },
         );
       } catch {
-        patchLastAnswer((msg) => ({
+        patchLastAnswer(threadId, (msg) => ({
           ...msg,
           streaming: false,
           failed: true,
@@ -168,9 +271,63 @@ export default function StudyPage() {
         toast('回答已完成，但学习进度暂时未同步');
       }
       setAsking(false);
-      setSelected(null);
     },
-    [selected, bookId, chapterId, patchLastAnswer, withChapterFlags, report, toast],
+    [bookId, chapterId, patchLastAnswer, withChapterFlags, report, toast],
+  );
+
+  /** 提问：气泡内或右栏输入框都走这里；没有活动线程时先建一条。 */
+  const handleAsk = useCallback(
+    async (question) => {
+      const selectionForThread = selected;
+      setSelected(null);
+      let threadId = activeThreadId;
+      if (!threadId) {
+        try {
+          const created = await api.createThread({
+            bookId,
+            chapterId,
+            anchorId: selectionForThread?.anchorId ?? '',
+            selectedText: selectionForThread?.text ?? '',
+          });
+          setThreads((prev) => [created, ...prev]);
+          setActiveThreadId(created.id);
+          threadId = created.id;
+        } catch {
+          toast('追问线程创建失败，请稍后重试');
+          return;
+        }
+      }
+      await askInThread(threadId, question, selectionForThread?.text);
+    },
+    [activeThreadId, askInThread, bookId, chapterId, selected, toast],
+  );
+
+  /** 切换到某条线程：定位到它绑定的原文锚点。 */
+  const handleSelectThread = useCallback(
+    (threadId) => {
+      const thread = threads.find((item) => item.id === threadId);
+      if (!thread) return;
+      setActiveThreadId(threadId);
+      setBubbleOpen(false);
+      if (thread.anchorId) {
+        focusSource(thread.anchorId, '已定位到这条追问对应的原文');
+      }
+    },
+    [threads, focusSource],
+  );
+
+  const handleDeleteThread = useCallback(
+    async (threadId) => {
+      try {
+        await api.deleteThread(threadId);
+      } catch {
+        toast('线程删除失败，请稍后重试');
+        return;
+      }
+      setThreads((prev) => prev.filter((thread) => thread.id !== threadId));
+      if (activeThreadId === threadId) setActiveThreadId(null);
+    },
+    [activeThreadId, toast],
   );
 
   if (loading) {
@@ -202,17 +359,31 @@ export default function StudyPage() {
         <Reader content={content} focusId={focusId} onSelect={handleSelect} onRead={handleRead} />
         <CoachPanel
           content={content}
-          chat={chat}
+          thread={activeThread}
+          threads={threads}
           asking={asking}
           selected={selected}
           progress={progress}
           onAsk={handleAsk}
           onComplete={handleComplete}
+          onSelectThread={handleSelectThread}
+          onDeleteThread={handleDeleteThread}
           onOpenSource={handleOpenSource}
           clearSelected={clearSelected}
           onFocusSource={focusSource}
         />
       </div>
+      <SelectionBubble
+        selection={selected}
+        anchor={bubbleRect}
+        thread={activeThread}
+        open={bubbleOpen}
+        asking={asking}
+        onOpen={handleOpenBubble}
+        onClose={handleCloseBubble}
+        onAsk={handleAsk}
+        onOpenSource={handleOpenSource}
+      />
     </section>
   );
 }

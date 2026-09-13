@@ -29,6 +29,17 @@ function renderApp(initialEntries = ['/']) {
   );
 }
 
+/** 模拟在原文里拖选第一段（带锚点的段落）。 */
+function selectFirstParagraph(paper) {
+  const firstSpan = paper.querySelector('p .source');
+  const range = document.createRange();
+  range.selectNodeContents(firstSpan);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  fireEvent.mouseUp(paper);
+}
+
 describe('主页', () => {
   it('加载后展示默认教材、学习计划与章节目录', async () => {
     renderApp();
@@ -312,16 +323,6 @@ describe('知识地图', () => {
 });
 
 describe('划词问答', () => {
-  function selectFirstParagraph(paper) {
-    const firstSpan = paper.querySelector('p .source');
-    const range = document.createRange();
-    range.selectNodeContents(firstSpan);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    fireEvent.mouseUp(paper);
-  }
-
   it('拖选原文后提问，回答逐块补齐并附带教材依据', async () => {
     const user = userEvent.setup();
     renderApp(['/study/calc7/ch2']);
@@ -408,5 +409,105 @@ describe('划词问答', () => {
     // 跳到对应章节（演示数据里 ch3 没有正文，显示占位页即可证明路由生效）
     expect(await screen.findByText('本章内容尚未准备')).toBeInTheDocument();
     streamSpy.mockRestore();
+  });
+});
+
+describe('划词气泡与追问线程', () => {
+  it('选中原文后在选区旁出现气泡按钮', async () => {
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+    expect(screen.queryByTestId('selection-bubble')).not.toBeInTheDocument();
+
+    selectFirstParagraph(paper);
+
+    const bubble = await screen.findByTestId('selection-bubble');
+    expect(bubble).toHaveTextContent('问 AI');
+  });
+
+  it('点击气泡会为该段原文开一条追问线程并打开浮层', async () => {
+    const user = userEvent.setup();
+    const createSpy = vi.spyOn(api, 'createThread');
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+    selectFirstParagraph(paper);
+
+    await user.click(await screen.findByTestId('selection-bubble'));
+
+    expect(await screen.findByTestId('selection-panel')).toBeInTheDocument();
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 'calc7', chapterId: 'ch2', anchorId: 'source-rate' }),
+    );
+    expect(
+      screen.getByText('就这段原文提问，回答会带上教材依据，可以连续追问。'),
+    ).toBeInTheDocument();
+    createSpy.mockRestore();
+  });
+
+  it('气泡内追问会流式回答，并出现在本章的追问线程列表里', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+    selectFirstParagraph(paper);
+    await user.click(await screen.findByTestId('selection-bubble'));
+
+    await user.type(screen.getByLabelText('追问输入框'), '这段想表达什么？');
+    await user.click(screen.getByRole('button', { name: '追问' }));
+
+    const panel = await screen.findByTestId('selection-panel');
+    await waitFor(() => expect(panel).toHaveTextContent('AI讲师'), { timeout: 3000 });
+    await waitFor(() => expect(panel).toHaveTextContent('Δy / Δx'), { timeout: 3000 });
+
+    const list = await screen.findByTestId('thread-list');
+    expect(list).toHaveTextContent('一个量相对于另一个量的变化率');
+  });
+
+  it('气泡浮层可以拖动、可以关闭', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+    selectFirstParagraph(paper);
+    await user.click(await screen.findByTestId('selection-bubble'));
+
+    const panel = screen.getByTestId('selection-panel');
+    const before = panel.style.left;
+    fireEvent.mouseDown(screen.getByTestId('selection-panel-handle'), {
+      clientX: 100,
+      clientY: 100,
+      button: 0,
+    });
+    fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
+    fireEvent.mouseUp(window);
+    expect(panel.style.left).not.toBe(before);
+
+    await user.click(screen.getByRole('button', { name: '关闭追问气泡' }));
+    expect(screen.queryByTestId('selection-panel')).not.toBeInTheDocument();
+  });
+
+  it('右栏直接提问同样落在追问线程里，标题取首个问题', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('mastery-panel');
+
+    await user.type(screen.getByLabelText('提问输入框'), '为什么一定要取极限？');
+    await user.click(screen.getByRole('button', { name: '提问' }));
+
+    const answer = await screen.findByTestId('answer', undefined, { timeout: 3000 });
+    await waitFor(() => expect(answer).toHaveTextContent('Δx'), { timeout: 3000 });
+    expect(await screen.findByTestId('thread-list')).toHaveTextContent('为什么一定要取极限？');
+  });
+
+  it('线程可以从列表里删除', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+    selectFirstParagraph(paper);
+    await user.click(await screen.findByTestId('selection-bubble'));
+    await user.type(screen.getByLabelText('追问输入框'), '这段想表达什么？');
+    await user.click(screen.getByRole('button', { name: '追问' }));
+    await screen.findByTestId('thread-list');
+
+    await user.click(screen.getByRole('button', { name: /删除线程/ }));
+
+    await waitFor(() => expect(screen.queryByTestId('thread-list')).not.toBeInTheDocument());
   });
 });

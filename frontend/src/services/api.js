@@ -2,6 +2,7 @@ import { books, studyContents } from '../data/books.js';
 import { knowledgeFor } from '../data/knowledge.js';
 import { answerFor } from './mockAnswers.js';
 import { recordLocalEvent } from './progress.js';
+import { appendLocalMessage, createLocalThread, deleteLocalThread, listLocalThreads } from './threads.js';
 
 /**
  * API 接口层：页面组件只依赖本模块。
@@ -185,37 +186,85 @@ export const api = {
    * 流式提问：后端走 SSE（`POST /api/ask/stream`），演示模式在本地分块模拟，
    * 两条路径都通过 onDelta/onDone 回报，页面渲染逻辑只写一份。
    *
-   * @param {{ question: string, selectedText?: string, bookId: string, chapterId: string }} params
+   * 带 threadId 时问答会写进该追问线程（后端持久化 / 演示模式写 localStorage）。
+   *
+   * @param {{ question: string, selectedText?: string, bookId: string, chapterId: string, threadId?: string }} params
    * @param {{ onDelta?: (text: string) => void, onDone?: (payload: object) => void, signal?: AbortSignal }} handlers
    */
-  async askStream({ question, selectedText, bookId, chapterId }, handlers = {}) {
+  async askStream({ question, selectedText, bookId, chapterId, threadId }, handlers = {}) {
     const { onDelta, onDone, signal } = handlers;
     if (!useBackend()) {
+      if (threadId) appendLocalMessage(threadId, { role: 'user', text: question });
       const result = answerFor(question, { selectedText });
       for (const chunk of chunkText(result.text)) {
         if (signal?.aborted) return;
         onDelta?.(chunk);
         await delay(DEMO_STREAM_INTERVAL);
       }
-      onDone?.({
+      const payload = {
         answer: result.text,
         sources: result.sources ?? [],
         sourceDetails: [],
         scope: 'chapter',
-      });
+        threadId: threadId ?? null,
+      };
+      if (threadId) {
+        appendLocalMessage(threadId, {
+          role: 'assistant',
+          text: payload.answer,
+          sources: payload.sources,
+        });
+      }
+      onDone?.(payload);
       return;
     }
 
     const res = await fetch(`${apiBase}/api/ask/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ question, bookId, chapterId, selectedText: selectedText || null }),
+      body: JSON.stringify({
+        question,
+        bookId,
+        chapterId,
+        selectedText: selectedText || null,
+        threadId: threadId || null,
+      }),
       signal,
     });
     if (!res.ok || !res.body) {
       throw new Error(`API ${res.status}: /api/ask/stream`);
     }
     await readEventStream(res.body, { onDelta, onDone });
+  },
+
+  /** 本章的追问线程列表（最近追问的在前）。 */
+  async fetchThreads(bookId, chapterId) {
+    if (useBackend()) {
+      return request(`/api/books/${bookId}/chapters/${chapterId}/threads`);
+    }
+    await delay(80);
+    return listLocalThreads(bookId, chapterId);
+  },
+
+  /** 为一段选中原文新建追问线程（划词气泡打开时调用）。 */
+  async createThread({ bookId, chapterId, anchorId = '', selectedText = '' }) {
+    if (useBackend()) {
+      return request('/api/threads', {
+        method: 'POST',
+        body: JSON.stringify({ bookId, chapterId, anchorId, selectedText }),
+      });
+    }
+    return createLocalThread({ bookId, chapterId, anchorId, selectedText });
+  },
+
+  /** 删除追问线程。 */
+  async deleteThread(threadId) {
+    if (useBackend()) {
+      const res = await fetch(`${apiBase}/api/threads/${threadId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`API ${res.status}: /api/threads/${threadId}`);
+      return;
+    }
+    deleteLocalThread(threadId);
   },
 };
 

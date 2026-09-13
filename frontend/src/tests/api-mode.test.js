@@ -134,16 +134,60 @@ describe('api 后端模式（REST）', () => {
     const deltas = [];
     let done = null;
     await api.askStream(
-      { question: '导数是什么？', bookId: 'b1', chapterId: 'ch2' },
+      { question: '导数是什么？', bookId: 'b1', chapterId: 'ch2', threadId: 'th-1' },
       { onDelta: (text) => deltas.push(text), onDone: (payload) => { done = payload; } },
     );
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://backend.test/api/ask/stream',
-      expect.objectContaining({ method: 'POST' }),
-    );
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://backend.test/api/ask/stream');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toMatchObject({ threadId: 'th-1' });
     expect(deltas.join('')).toBe('导数是变化率');
     expect(done).toMatchObject({ answer: '导数是变化率', sources: ['s1'], scope: 'book' });
+  });
+
+  it('fetchThreads 请求本章线程列表', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => [] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.fetchThreads('b1', 'ch2')).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://backend.test/api/books/b1/chapters/ch2/threads',
+      expect.anything(),
+    );
+  });
+
+  it('createThread 提交选中原文与锚点', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ id: 'th-1' }) }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      api.createThread({ bookId: 'b1', chapterId: 'ch2', anchorId: 'b1-ch2-s3', selectedText: '原文' }),
+    ).resolves.toMatchObject({ id: 'th-1' });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://backend.test/api/threads');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({
+      bookId: 'b1',
+      chapterId: 'ch2',
+      anchorId: 'b1-ch2-s3',
+      selectedText: '原文',
+    });
+  });
+
+  it('deleteThread 使用 DELETE', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.deleteThread('th-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('http://backend.test/api/threads/th-1', {
+      method: 'DELETE',
+    });
   });
 
   it('未配置后端时维持演示模式（不发起网络请求）', async () => {

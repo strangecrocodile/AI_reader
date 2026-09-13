@@ -2,17 +2,20 @@ import { useState } from 'react';
 import SegmentText from './SegmentText.jsx';
 
 /**
- * AI 讲解侧栏：顶部 Tab（AI 讲解 / 知识点大纲）+ 讲解内容 + 问答区。
+ * AI 讲解侧栏：顶部 Tab（AI 讲解 / 知识点大纲）+ 讲解内容 + 追问线程与问答区。
  * 顶部还展示由学习事件算出的掌握度及其构成（见 services/progress.js）。
  */
 export default function CoachPanel({
   content,
-  chat,
+  thread,
+  threads = [],
   asking,
   selected,
   progress,
   onAsk,
   onComplete,
+  onSelectThread,
+  onDeleteThread,
   onOpenSource,
   clearSelected,
   onFocusSource,
@@ -72,10 +75,48 @@ export default function CoachPanel({
             ))}
           </div>
         )}
-        <Chat chat={chat} onOpenSource={onOpenSource} />
+        <ThreadList threads={threads} activeId={thread?.id} onSelect={onSelectThread} onDelete={onDeleteThread} />
+        <Chat chat={thread?.messages ?? []} onOpenSource={onOpenSource} />
       </div>
-      <AskBox selected={selected} asking={asking} onAsk={onAsk} onClear={clearSelected} />
+      <AskBox
+        selected={selected}
+        thread={thread}
+        asking={asking}
+        onAsk={onAsk}
+        onClear={clearSelected}
+      />
     </aside>
+  );
+}
+
+/** 追问线程列表：点标题切换并定位回它绑定的原文，× 删除。 */
+export function ThreadList({ threads = [], activeId, onSelect, onDelete }) {
+  if (threads.length === 0) return null;
+  return (
+    <div className="thread-list" data-testid="thread-list">
+      <div className="thread-list-head">
+        <span>追问线程</span>
+        <span>{threads.length} 条</span>
+      </div>
+      <ul>
+        {threads.map((thread) => (
+          <li key={thread.id} className={thread.id === activeId ? 'active' : ''}>
+            <button className="thread-open" type="button" onClick={() => onSelect?.(thread.id)}>
+              <span className="thread-title">{thread.title}</span>
+              <span className="thread-meta">{(thread.messages ?? []).length} 条消息</span>
+            </button>
+            <button
+              className="thread-delete"
+              type="button"
+              onClick={() => onDelete?.(thread.id)}
+              aria-label={`删除线程 ${thread.title}`}
+            >
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -185,7 +226,7 @@ function sourceLabel(sourceId, details = []) {
 }
 
 /** 提问框：显示已选中原文，支持回车提问。 */
-export function AskBox({ selected, asking, onAsk, onClear }) {
+export function AskBox({ selected, thread, asking, onAsk, onClear }) {
   const [value, setValue] = useState('');
 
   const submit = () => {
@@ -194,6 +235,12 @@ export function AskBox({ selected, asking, onAsk, onClear }) {
     onAsk(q);
     setValue('');
   };
+
+  const placeholder = selected
+    ? '围绕这段原文提问…'
+    : thread?.selectedText
+      ? '继续追问这条线程…'
+      : '就当前章节提问，例如：为什么一定要取极限？';
 
   return (
     <div className="ask-box">
@@ -209,7 +256,7 @@ export function AskBox({ selected, asking, onAsk, onClear }) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
-          placeholder={selected ? '围绕这段原文提问…' : '就当前章节提问，例如：为什么一定要取极限？'}
+          placeholder={placeholder}
           aria-label="提问输入框"
         />
         <button onClick={submit} disabled={asking}>

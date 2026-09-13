@@ -4,7 +4,7 @@ import SegmentText from './SegmentText.jsx';
 
 /**
  * 教材原文阅读器：按「纸张」样式渲染段落与公式；
- * 支持拖选原文（onSelect）、锚点定位高亮（focusId），
+ * 支持拖选原文（onSelect，带所在锚点与选区位置）、锚点定位高亮（focusId），
  * 以及「读到过哪些段落」的可见性上报（onRead），用于计算真实掌握度。
  */
 export default function Reader({ content, focusId, onSelect, onRead }) {
@@ -50,7 +50,7 @@ export default function Reader({ content, focusId, onSelect, onRead }) {
     const text = sel ? sel.toString().trim() : '';
     const inside = paperRef.current && sel && paperRef.current.contains(sel.anchorNode);
     if (text.length > 1 && inside) {
-      onSelect(text);
+      onSelect(text, selectionMeta(sel));
     }
   };
 
@@ -93,4 +93,20 @@ export default function Reader({ content, focusId, onSelect, onRead }) {
       <div className="reader-tip">用鼠标左键拖选原文，即可对选中内容提问</div>
     </article>
   );
+}
+
+/** 选区信息：所在原文锚点 + 视口位置（划词气泡据此贴到选区旁边）。 */
+function selectionMeta(selection) {
+  if (!selection || selection.rangeCount === 0) return { anchorId: '', rect: null };
+  const range = selection.getRangeAt(0);
+  const node = selection.anchorNode;
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  const sourceElement = element?.closest?.('[data-source-id]');
+  const box = range.getBoundingClientRect?.();
+  return {
+    anchorId: sourceElement?.dataset?.sourceId ?? '',
+    rect: box
+      ? { top: box.top, left: box.left, bottom: box.bottom, width: box.width }
+      : null,
+  };
 }
