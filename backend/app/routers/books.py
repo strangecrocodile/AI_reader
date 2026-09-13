@@ -1,14 +1,19 @@
 """教材/章节/规划接口。"""
+import json
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
 from ..models import AskRequest, EventRequest, ProgressRequest
 from ..serializers import book_meta, chapter_content
-from ..services.ask import answer_question
+from ..services.ask import answer_question, stream_answer
 from ..services.ingest import SUPPORTED_MESSAGE, detect_format, ingest_file_bytes
 from ..services.knowledge import get_knowledge
 from ..services.progress import record_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -143,6 +148,36 @@ def ask(payload: AskRequest, request: Request):
     return answer_question(
         db, retrieval, llm, payload.bookId, payload.chapterId,
         payload.question, payload.selectedText or "",
+    )
+
+
+@router.post("/api/ask/stream")
+def ask_stream(payload: AskRequest, request: Request):
+    """流式问答（SSE）：meta（检索范围与证据）→ delta（逐块回答）→ done（含溯源锚点）。"""
+    db, llm, retrieval, _ = _state(request)
+    book = db.get_book(payload.bookId)
+    chapter = db.get_chapter(payload.bookId, payload.chapterId)
+    if not book or not chapter:
+        raise HTTPException(status_code=404, detail="教材或章节不存在")
+
+    events = stream_answer(
+        db, retrieval, llm, payload.bookId, payload.chapterId,
+        payload.question, payload.selectedText or "",
+    )
+
+    def frames():
+        try:
+            for event in events:
+                yield f"event: {event['event']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:  # noqa: BLE001 —— 流已开始，只能以 error 事件收尾
+            logger.exception("流式问答失败")
+            payload_out = {"event": "error", "message": str(e)}
+            yield f"event: error\ndata: {json.dumps(payload_out, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

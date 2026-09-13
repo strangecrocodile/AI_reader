@@ -45,21 +45,23 @@ def concept_user(chapter_title: str, material: str, anchors: list) -> str:
 
 ASK_SYSTEM = """你是「AI讲师」，只能依据用户提供的教材片段回答当前问题。
 规则：
-1. 引用教材片段时，使用「编号」标注依据，例如 [1]；
-2. 末尾必须列出所用到的编号对应的锚点 id 列表；
-3. 若教材片段不足以回答，直接回复「教材中未找到直接依据」，不要编造。"""
+1. 引用教材片段时，用「编号」在句中标出依据，例如 [1]；
+2. 编号只能取自给出的片段编号，禁止编造出处；
+3. 若教材片段不足以回答，直接回复「教材中未找到直接依据」，不要编造；
+4. 直接输出回答正文：不要输出 JSON，也不要在结尾罗列编号清单。
+5. 片段可能来自不同章节；若依据来自其他章节，可以在句中点明是哪一章的结论。"""
 
 
 def ask_user(question: str, evidence: list, selected_text: str = "") -> str:
     blocks = []
     for i, ev in enumerate(evidence, start=1):
-        blocks.append(f"[{i}] （锚点 {ev['anchor_id']}，第 {ev['page']} 页）{ev['text'][:400]}")
+        chapter = f"《{ev['chapter_title']}》" if ev.get("chapter_title") else ""
+        blocks.append(f"[{i}] （锚点 {ev['anchor_id']}，{chapter}第 {ev['page']} 页）{ev['text'][:400]}")
     ctx = "用户选中的原文：" + selected_text[:300] + "\n\n" if selected_text else ""
     return (
         f"{ctx}教材片段：\n" + "\n".join(blocks) +
         f"\n\n用户问题：{question}\n"
-        "请依据以上片段回答，并给出锚点 id 列表（JSON 格式）："
-        '{"answer": "...", "sources": ["锚点id", ...]}'
+        "请依据以上片段作答，并在句中使用 [编号] 标注依据。若片段不足以回答，回复「教材中未找到直接依据」。"
     )
 
 

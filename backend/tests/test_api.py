@@ -1,4 +1,6 @@
 """API 集成测试：导入 → 列表 → 章节内容（讲解/大纲）→ 溯源问答 → 规划 → 掌握度事件。"""
+import json
+
 import pytest
 
 
@@ -236,6 +238,124 @@ def test_ask_no_evidence(client, demo_pdf_bytes):
 def test_ask_unknown_book_404(client, demo_pdf_bytes):
     resp = client.post(
         "/api/ask",
+        json={"question": "导数是什么？", "bookId": "nope", "chapterId": "ch1"},
+    )
+    assert resp.status_code == 404
+
+
+def test_ask_expands_to_other_chapters(client, demo_pdf_bytes):
+    """本章没讲的内容，应扩展到全书检索并标明依据来自哪一章。"""
+    book = _upload(client, demo_pdf_bytes)
+    first, second = book["chapters"][0], book["chapters"][1]
+
+    data = client.post(
+        "/api/ask",
+        json={"question": "平均变化率是什么？", "bookId": book["id"], "chapterId": first["id"]},
+    ).json()
+
+    assert data["scope"] == "book"
+    assert data["sources"]
+    detail = data["sourceDetails"][0]
+    assert detail["chapterId"] == second["id"], "依据应来自第 2 章"
+    assert detail["chapterTitle"] == second["title"]
+    assert detail["page"] > 0
+
+
+def test_ask_stays_in_chapter_when_chapter_has_evidence(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][0]
+
+    data = client.post(
+        "/api/ask",
+        json={"question": "极限是什么？", "bookId": book["id"], "chapterId": chapter["id"]},
+    ).json()
+
+    assert data["scope"] == "chapter"
+    assert all(item["chapterId"] == chapter["id"] for item in data["sourceDetails"])
+
+
+def _sse_frames(body: str):
+    """把 SSE 响应体拆成 [(event, data)]。"""
+    frames = []
+    for block in body.strip().split("\n\n"):
+        lines = [line for line in block.splitlines() if line.strip()]
+        if len(lines) < 2:
+            continue
+        event = lines[0].split(":", 1)[1].strip()
+        payload = json.loads(lines[1].split(":", 1)[1].strip())
+        frames.append((event, payload))
+    return frames
+
+
+def test_ask_stream_emits_meta_delta_done(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][1]
+
+    resp = client.post(
+        "/api/ask/stream",
+        json={"question": "导数的定义是什么？", "bookId": book["id"], "chapterId": chapter["id"]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    frames = _sse_frames(resp.text)
+    events = [event for event, _ in frames]
+    assert events[0] == "meta"
+    assert events[-1] == "done"
+    assert "delta" in events
+
+    meta = frames[0][1]
+    done = frames[-1][1]
+    assert meta["evidenceCount"] >= 1
+    assert meta["scope"] in {"chapter", "book"}
+    # 逐块内容拼起来就是最终回答
+    assert "".join(data["text"] for event, data in frames if event == "delta") == done["answer"]
+    assert done["sources"]
+    paragraph_ids = {
+        seg["id"]
+        for para in client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()["paragraphs"]
+        for seg in para.get("segs", [])
+    }
+    assert set(done["sources"]) <= paragraph_ids
+
+
+def test_ask_stream_reports_no_evidence(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+
+    resp = client.post(
+        "/api/ask/stream",
+        json={
+            "question": "今天晚上的月亮有多圆？",
+            "bookId": book["id"],
+            "chapterId": book["chapters"][0]["id"],
+        },
+    )
+
+    frames = _sse_frames(resp.text)
+    assert [event for event, _ in frames] == ["done"]
+    done = frames[0][1]
+    assert done["noEvidence"] is True
+    assert done["answer"] == "教材中未找到直接依据"
+    assert done["sources"] == []
+
+
+def test_ask_stream_expands_to_other_chapters(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+    first, second = book["chapters"][0], book["chapters"][1]
+
+    resp = client.post(
+        "/api/ask/stream",
+        json={"question": "平均变化率是什么？", "bookId": book["id"], "chapterId": first["id"]},
+    )
+
+    meta = _sse_frames(resp.text)[0][1]
+    assert meta["scope"] == "book"
+    assert any(item["chapterId"] == second["id"] for item in meta["sourceDetails"])
+
+
+def test_ask_stream_unknown_book_404(client):
+    resp = client.post(
+        "/api/ask/stream",
         json={"question": "导数是什么？", "bookId": "nope", "chapterId": "ch1"},
     )
     assert resp.status_code == 404

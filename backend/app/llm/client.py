@@ -6,7 +6,7 @@
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Iterator, List
 
 
 class LLMError(RuntimeError):
@@ -20,6 +20,12 @@ class LLMClient(ABC):
     @abstractmethod
     def chat(self, messages: List[dict], temperature: float = 0.3, max_tokens: int = 1500) -> str:
         """messages: [{'role':..., 'content':...}] → 模型回复文本。"""
+
+    def chat_stream(
+        self, messages: List[dict], temperature: float = 0.3, max_tokens: int = 1500
+    ) -> Iterator[str]:
+        """流式输出。默认退化为一次性返回，子类可覆写为真流式。"""
+        yield self.chat(messages, temperature=temperature, max_tokens=max_tokens)
 
 
 class CloudLLM(LLMClient):
@@ -53,6 +59,44 @@ class CloudLLM(LLMClient):
             return resp.json()["choices"][0]["message"]["content"]
         except Exception as e:  # noqa: BLE001
             raise LLMError(f"LLM 调用失败: {e}") from e
+
+    def chat_stream(
+        self, messages: List[dict], temperature: float = 0.3, max_tokens: int = 1500
+    ) -> Iterator[str]:
+        """OpenAI 兼容的流式补全：逐块产出 delta 文本。"""
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        try:
+            with self._httpx.stream(
+                "POST",
+                self.url,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=payload,
+                timeout=self.timeout,
+            ) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    text = line.decode("utf-8", "ignore") if isinstance(line, bytes) else line
+                    if not text or not text.startswith("data:"):
+                        continue
+                    chunk = text[5:].strip()
+                    if chunk == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(chunk)
+                    except json.JSONDecodeError:
+                        continue  # 允许服务端插入的心跳/空行
+                    delta = (data.get("choices") or [{}])[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield content
+        except Exception as e:  # noqa: BLE001
+            raise LLMError(f"LLM 流式调用失败: {e}") from e
 
 
 class MockLLM(LLMClient):
