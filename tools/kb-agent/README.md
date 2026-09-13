@@ -4,6 +4,11 @@
 
 > 定位：小组分工里“教材入库/拆书/建库/知识点抽取”这条线的验证原型。
 > 已并入 AI_reader 仓库 `tools/kb-agent/`（main）。
+>
+> 与主产品的关系：主产品入库层现已支持 `.docx`/`.txt`/`.md`
+> （`backend/app/parsing/`），并复用了本组件的 V2 知识点契约
+> （`backend/app/services/concepts.py`）；本组件继续承担「整本书拆章落盘 +
+> RAG 建库 + 概念图谱/思维导图预览」这条独立验证线，两者互不依赖。
 
 ## 新增能力（V2 起）
 

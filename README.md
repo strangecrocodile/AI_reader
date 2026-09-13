@@ -9,7 +9,7 @@
 AI_reader/
 ├── docs/              # 赛题要求、产品设计、后端设计、下一阶段开发文档
 ├── frontend/          # React 19 + Vite 8 前端（主页 / 学习页 / 知识地图）
-├── backend/           # FastAPI 后端（PDF 解析 / RAG 检索 / 溯源问答）
+├── backend/           # FastAPI 后端（PDF/Word/文本解析 · RAG 检索 · 溯源问答 · 知识图谱）
 └── tools/kb-agent/    # 教材入库 Agent 原型（.docx → 章节 Word + RAG 知识库，独立组件）
 ```
 
@@ -131,11 +131,11 @@ $env:PYTHONPATH = 'src'
 提交改动前，请确保相关套件全部通过。测试均不依赖模型 Key，也不访问外网。
 
 ```powershell
-# 后端：51 项
+# 后端：71 项
 cd backend
 .venv\Scripts\python.exe -m pytest
 
-# 前端：43 项
+# 前端：44 项
 cd frontend
 npm test
 
@@ -166,7 +166,8 @@ cd tools\kb-agent
 ## 五、体验完整链路
 
 1. 打开 http://localhost:3000 —— 主页展示从后端加载的教材与学习路径；
-2. 点击「更换教材」→「上传」，导入任意文本型 PDF（带目录书签效果最佳）；
+2. 点击「更换教材」→「上传」，导入 **PDF / Word(.docx) / 纯文本(.txt/.md)** 教材
+   （PDF 带目录书签、Word 带标题样式时章节识别最准；`.doc` 请先另存为 `.docx`）；
 3. 进入章节 —— 左栏教材原文、右栏 AI 讲解；用鼠标拖选原文提问，回答附带「教材依据」可一键回跳原文；
 4. 进入「知识地图」—— 查看跨章节沉淀的知识点卡片、**前置依赖**（实线带箭头）与**学习顺序**（虚线），
    教材里没有出现过的前置概念会单独列出；点击节点可回到对应章节原文核对。
@@ -185,7 +186,10 @@ cd tools\kb-agent
 后端换端口启动（如 `--port 8001`），并把 `frontend\.env` 的 `VITE_API_BASE_URL` 同步改成对应地址；前端端口可在 `frontend/vite.config.mjs` 调整。
 
 **知识地图为空或提示不可用？**
-知识地图由章节原文抽取出的知识点聚合而来，需要先有一次教材成功入库。确认已执行 `scripts\make_demo_pdf.py`，或先在主页上传一本 PDF。
+知识地图由章节原文抽取出的知识点聚合而来，需要先有一次教材成功入库。确认已执行 `scripts\make_demo_pdf.py`，或先在主页上传一本教材。
+
+**上传 `.doc` 或扫描件 PDF 报错？**
+`.doc`（旧版二进制 Word）不支持，请用 Word 另存为 `.docx`；扫描件 PDF 没有文本层，属于产品范围之外（见 `docs\产品设计文档.md` 第 6 节）。
 
 **`tools\kb-agent` 报 `ModuleNotFoundError: kb_agent`？**
 启动前需要设置 `$env:PYTHONPATH = 'src'`（测试不用，`conftest.py` 已自动处理）。
