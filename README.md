@@ -131,11 +131,11 @@ $env:PYTHONPATH = 'src'
 提交改动前，请确保相关套件全部通过。测试均不依赖模型 Key，也不访问外网。
 
 ```powershell
-# 后端：25 项
+# 后端：51 项
 cd backend
 .venv\Scripts\python.exe -m pytest
 
-# 前端：36 项
+# 前端：43 项
 cd frontend
 npm test
 
@@ -168,7 +168,8 @@ cd tools\kb-agent
 1. 打开 http://localhost:3000 —— 主页展示从后端加载的教材与学习路径；
 2. 点击「更换教材」→「上传」，导入任意文本型 PDF（带目录书签效果最佳）；
 3. 进入章节 —— 左栏教材原文、右栏 AI 讲解；用鼠标拖选原文提问，回答附带「教材依据」可一键回跳原文；
-4. 进入「知识地图」—— 查看由章节讲义沉淀出的知识点卡片、关系图谱与掌握度，并可点击回到对应章节原文。
+4. 进入「知识地图」—— 查看跨章节沉淀的知识点卡片、**前置依赖**（实线带箭头）与**学习顺序**（虚线），
+   教材里没有出现过的前置概念会单独列出；点击节点可回到对应章节原文核对。
 
 ---
 
@@ -184,7 +185,7 @@ cd tools\kb-agent
 后端换端口启动（如 `--port 8001`），并把 `frontend\.env` 的 `VITE_API_BASE_URL` 同步改成对应地址；前端端口可在 `frontend/vite.config.mjs` 调整。
 
 **知识地图为空或提示不可用？**
-知识地图由章节讲义聚合而来，需要先有一次教材成功入库。确认已执行 `scripts\make_demo_pdf.py`，或先在主页上传一本 PDF。
+知识地图由章节原文抽取出的知识点聚合而来，需要先有一次教材成功入库。确认已执行 `scripts\make_demo_pdf.py`，或先在主页上传一本 PDF。
 
 **`tools\kb-agent` 报 `ModuleNotFoundError: kb_agent`？**
 启动前需要设置 `$env:PYTHONPATH = 'src'`（测试不用，`conftest.py` 已自动处理）。
