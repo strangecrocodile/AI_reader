@@ -3,7 +3,11 @@ import { useBooks } from '../state/BookContext.jsx';
 import { useToast } from '../state/ToastContext.jsx';
 import { api } from '../services/api.js';
 
-/** 更换教材弹窗：可切换已有教材，也可上传文本型 PDF。 */
+/** 与后端 services/ingest.py 的 SUPPORTED_MESSAGE 保持一致，前端只做前置提示。 */
+const SUPPORTED_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md'];
+const FORMAT_HINT = '目前支持 PDF / Word(.docx) / 纯文本(.txt/.md) 教材；.doc 请先另存为 .docx';
+
+/** 更换教材弹窗：可切换已有教材，也可上传 PDF / Word / 纯文本教材。 */
 export default function BookModal({ open, onClose }) {
   const { books, currentBookId, setCurrentBookId, refreshBooks } = useBooks();
   const toast = useToast();
@@ -25,8 +29,9 @@ export default function BookModal({ open, onClose }) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      toast('目前只支持上传 PDF 文件');
+    const name = file.name.toLowerCase();
+    if (!SUPPORTED_EXTENSIONS.some((ext) => name.endsWith(ext))) {
+      toast(FORMAT_HINT);
       return;
     }
     setUploading(true);
@@ -38,7 +43,7 @@ export default function BookModal({ open, onClose }) {
       toast(`《${imported.title}》已上传并识别 ${imported.chapters.length} 个章节`);
       onClose();
     } catch (error) {
-      toast(error.message || 'PDF 上传失败');
+      toast(error.message || '教材上传失败');
     } finally {
       setUploading(false);
     }
@@ -71,13 +76,14 @@ export default function BookModal({ open, onClose }) {
             ref={inputRef}
             className="upload-input"
             type="file"
-            accept=".pdf,application/pdf"
+            accept=".pdf,.docx,.txt,.md,application/pdf,text/plain,text/markdown"
             onChange={upload}
-            aria-label="选择 PDF 教材"
+            aria-label="选择教材文件"
           />
           <button className="upload" type="button" onClick={() => inputRef.current?.click()} disabled={uploading}>
-            {uploading ? '正在上传并识别目录…' : '＋ 上传新教材（PDF）'}
+            {uploading ? '正在上传并识别目录…' : '＋ 上传新教材（PDF / Word / 文本）'}
           </button>
+          <p className="upload-hint">{FORMAT_HINT}</p>
         </div>
       </div>
     </div>

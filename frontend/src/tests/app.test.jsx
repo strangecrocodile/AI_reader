@@ -73,7 +73,7 @@ describe('主页', () => {
     await user.click(screen.getByRole('button', { name: /更换教材/ }));
 
     const file = new File(['%PDF-demo'], 'new-book.pdf', { type: 'application/pdf' });
-    fireEvent.change(screen.getByLabelText('选择 PDF 教材'), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText('选择教材文件'), { target: { files: [file] } });
 
     await waitFor(() => expect(uploadBook).toHaveBeenCalledWith(file));
     expect(fetchBooks).toHaveBeenCalledTimes(2);
@@ -84,16 +84,52 @@ describe('主页', () => {
     fetchBooks.mockRestore();
   });
 
-  it('选择非 PDF 文件时不会发起上传并提示格式限制', async () => {
+  it('选择 Word 教材时同样可以上传并切换', async () => {
+    const uploaded = {
+      ...mockBooks[0],
+      id: 'uploaded-docx',
+      title: '微积分入门（Word 版）',
+      cover: { ...mockBooks[0].cover, lines: ['微积分入门（Word 版）'] },
+    };
+    const fetchBooks = vi
+      .spyOn(api, 'fetchBooks')
+      .mockResolvedValueOnce(mockBooks)
+      .mockResolvedValueOnce([...mockBooks, uploaded]);
+    const uploadBook = vi.spyOn(api, 'uploadBook').mockResolvedValue(uploaded);
+    const user = userEvent.setup();
+
+    renderApp();
+    await screen.findByText('正在学习的教材');
+    await user.click(screen.getByRole('button', { name: /更换教材/ }));
+
+    const file = new File(['PK'], '微积分入门.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    fireEvent.change(screen.getByLabelText('选择教材文件'), { target: { files: [file] } });
+
+    await waitFor(() => expect(uploadBook).toHaveBeenCalledWith(file));
+    expect(await screen.findByTestId('book-cover')).toHaveTextContent('微积分入门（Word 版）');
+
+    uploadBook.mockRestore();
+    fetchBooks.mockRestore();
+  });
+
+  it('选择不支持的格式时不会发起上传并提示可用格式', async () => {
+    const uploadBook = vi.spyOn(api, 'uploadBook');
     const user = userEvent.setup();
     renderApp();
     await screen.findByText('正在学习的教材');
     await user.click(screen.getByRole('button', { name: /更换教材/ }));
 
-    const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
-    fireEvent.change(screen.getByLabelText('选择 PDF 教材'), { target: { files: [file] } });
+    const file = new File(['doc'], 'old.doc', { type: 'application/msword' });
+    fireEvent.change(screen.getByLabelText('选择教材文件'), { target: { files: [file] } });
 
-    expect(await screen.findByText('目前只支持上传 PDF 文件')).toBeInTheDocument();
+    expect(await screen.findByText(/目前支持 PDF \/ Word\(\.docx\)/, { selector: '.upload-hint' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('目前支持 PDF / Word(.docx)'),
+    );
+    expect(uploadBook).not.toHaveBeenCalled();
+    uploadBook.mockRestore();
   });
 });
 

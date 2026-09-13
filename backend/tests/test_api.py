@@ -55,6 +55,8 @@ def test_upload_docx_runs_full_chain(client, demo_docx_bytes):
     content = client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()
     assert content["paragraphs"], "Word 教材应解析出原文段落"
     assert content["knowledgePoints"]
+    # 标题自带「第1章」时，导语不再重复章号
+    assert content["intro"] == "第1章 函数与极限　/　第 1 页"
     paragraph_ids = {seg["id"] for p in content["paragraphs"] for seg in p.get("segs", [])}
     for point in content["knowledgePoints"]:
         assert point["sourceId"] in paragraph_ids
@@ -97,6 +99,9 @@ def test_upload_txt_book_with_chinese_chapter_headings(client):
     book = resp.json()
     assert book["title"] == "教材"
     assert [c["title"] for c in book["chapters"]] == ["第1章 函数与极限", "第2章 导数与微分"]
+
+    content = client.get(f"/api/books/{book['id']}/chapters/{book['chapters'][0]['id']}").json()
+    assert content["intro"] == "第1章 函数与极限　/　第 1 页"
 
 
 def test_upload_rejects_empty_file(client):

@@ -319,6 +319,13 @@
   pointer-events: none;
 }
 
+.upload-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 900px) {
   .page {

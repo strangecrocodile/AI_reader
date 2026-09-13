@@ -2,6 +2,7 @@
 from typing import Any, Dict, List, Optional
 
 from .db import Database
+from .parsing.base import CHAPTER_TITLE_RE
 from .services import lesson, plan as plan_service
 
 
@@ -117,8 +118,15 @@ def chapter_content(db: Database, llm, book: Dict, chapter: Dict) -> Dict[str, A
         "chapterId": chapter["id"],
         "page": chapter["page_start"],
         "heading": chapter["title"],
-        "intro": f"第 {chapter['num']} 章 · {chapter['title']}　/　第 {chapter['page_start']} 页",
+        "intro": _chapter_intro(chapter),
         "paragraphs": paragraphs,
         "knowledgePoints": points,
         "outline": outline,
     }
+
+
+def _chapter_intro(chapter: Dict[str, Any]) -> str:
+    """章节导语：标题自带「第X章」时不再重复加章号。"""
+    title = chapter["title"]
+    prefix = "" if CHAPTER_TITLE_RE.match(title) else f"第 {chapter['num']} 章 · "
+    return f"{prefix}{title}　/　第 {chapter['page_start']} 页"
