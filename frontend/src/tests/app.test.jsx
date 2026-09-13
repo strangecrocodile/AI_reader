@@ -173,6 +173,29 @@ describe('知识地图', () => {
     expect(await screen.findByTestId('paper')).toBeInTheDocument();
     await waitFor(() => expect(document.getElementById('source-rate')).toHaveClass('focus'));
   });
+
+  it('图谱区分前置依赖与学习顺序，并单独列出教材外前置', async () => {
+    renderApp(['/knowledge']);
+    const graph = await screen.findByTestId('knowledge-graph');
+
+    expect(graph.querySelectorAll('line.graph-line.prerequisite').length).toBeGreaterThan(0);
+    expect(graph.querySelectorAll('line.graph-line.sequence').length).toBeGreaterThan(0);
+    expect(screen.getByText('前置依赖')).toBeInTheDocument();
+    expect(screen.getByText('学习顺序')).toBeInTheDocument();
+
+    const external = screen.getByTestId('knowledge-external');
+    expect(external).toHaveTextContent('教材中未出现的前置概念');
+    expect(external).toHaveTextContent('极限');
+  });
+
+  it('知识点详情展示前置概念，教材外的前置会被标注', async () => {
+    renderApp(['/knowledge']);
+    await screen.findByText('知识点卡片');
+
+    // 默认选中第一个知识点，它依赖的「极限」在演示数据里没有卡片
+    expect(await screen.findByText('前置概念')).toBeInTheDocument();
+    expect(screen.getByText('极限（教材外）')).toBeInTheDocument();
+  });
 });
 
 describe('划词问答', () => {

@@ -166,7 +166,22 @@
 .graph-lines line {
   stroke: #9db8a2;
   stroke-width: 0.55;
+}
+
+/* 前置依赖：实线 + 箭头（source 依赖 target） */
+.graph-lines line.prerequisite {
+  stroke: var(--green);
+  stroke-width: 0.7;
+}
+
+/* 学习顺序：虚线，弱化显示 */
+.graph-lines line.sequence {
   stroke-dasharray: 2 1;
+  opacity: 0.75;
+}
+
+.graph-lines marker path {
+  fill: var(--green);
 }
 
 .graph-node {
@@ -202,6 +217,108 @@
   color: var(--muted);
   text-align: center;
   padding: 160px 30px;
+}
+
+/* ---------- 图谱图例与教材外前置 ---------- */
+.graph-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend-line {
+  width: 26px;
+  height: 0;
+  border-top: 2px solid var(--green);
+}
+
+.legend-line.sequence {
+  border-top-style: dashed;
+  border-top-color: #9db8a2;
+}
+
+.graph-external {
+  margin-top: 14px;
+  border: 1px dashed #cbbf9a;
+  background: #fffaf0;
+  padding: 12px 14px;
+  font-size: 12px;
+}
+
+.graph-external strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #a8522e;
+}
+
+.graph-external ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.graph-external li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.external-name {
+  font-weight: 700;
+}
+
+.external-note {
+  color: var(--muted);
+}
+
+/* ---------- 详情里的前置概念 ---------- */
+.detail-prereq {
+  margin-top: 16px;
+}
+
+.detail-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.prereq-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.prereq-chip {
+  border: 1px solid var(--green);
+  background: #eef6e7;
+  color: var(--ink);
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.prereq-chip:hover {
+  background: #dff0d1;
+}
+
+.prereq-chip.external {
+  border-style: dashed;
+  border-color: #cbbf9a;
+  background: #fffaf0;
+  color: #a8522e;
+  font-weight: 400;
 }
 
 .concept-detail {

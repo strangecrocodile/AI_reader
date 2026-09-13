@@ -3,6 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
 import { useBooks } from '../state/BookContext.jsx';
 
+const METHOD_LABELS = {
+  llm: 'LLM 抽取',
+  rule: '规则抽取',
+  demo: '演示数据',
+};
+
 function nodePosition(index, total) {
   const columns = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(total))));
   const rows = Math.ceil(total / columns);
@@ -12,6 +18,11 @@ function nodePosition(index, total) {
     left: `${((column + 0.5) / columns) * 100}%`,
     top: `${((row + 0.5) / rows) * 100}%`,
   };
+}
+
+function methodLabel(methods) {
+  if (!methods?.length) return '';
+  return methods.map((method) => METHOD_LABELS[method] ?? method).join(' · ');
 }
 
 export default function KnowledgePage() {
@@ -50,6 +61,11 @@ export default function KnowledgePage() {
     [data, selectedId],
   );
 
+  const conceptByTitle = useMemo(
+    () => new Map((data?.concepts ?? []).map((concept) => [concept.title, concept])),
+    [data],
+  );
+
   if (error) {
     return (
       <section className="page active knowledge-page">
@@ -72,13 +88,21 @@ export default function KnowledgePage() {
     );
   }
 
+  const unresolved = data.unresolved ?? [];
+
   return (
     <section className="page active knowledge-page">
       <header className="knowledge-header">
         <div>
-          <div className="eyebrow">KNOWLEDGE MAP · {data.bookTitle}</div>
+          <div className="eyebrow">
+            KNOWLEDGE MAP · {data.bookTitle}
+            {methodLabel(data.methods) ? ` · ${methodLabel(data.methods)}` : ''}
+          </div>
           <h1>把读过的内容，连成一张地图。</h1>
-          <p className="sub">知识点来自章节讲义，并保留教材原文锚点。点击节点查看详情，再回到对应章节继续学习。</p>
+          <p className="sub">
+            知识点来自章节讲义，并保留教材原文锚点。实线箭头是知识点之间的前置依赖，
+            虚线是同一章的学习顺序；点击节点查看详情，再回到对应章节继续学习。
+          </p>
         </div>
         <Link className="knowledge-back" to="/">
           返回学习计划
@@ -89,6 +113,8 @@ export default function KnowledgePage() {
         <Stat value={data.stats.conceptCount} label="知识点" />
         <Stat value={data.stats.learnedCount} label="已建立学习记录" />
         <Stat value={data.stats.relationCount} label="关系" />
+        <Stat value={data.stats.prerequisiteCount ?? 0} label="其中前置依赖" />
+        <Stat value={data.stats.unresolvedCount ?? 0} label="教材外前置" />
       </div>
 
       <div className="knowledge-layout">
@@ -120,23 +146,44 @@ export default function KnowledgePage() {
         <section className="graph-panel" aria-label="知识点关系图谱">
           <div className="section-title">
             <h2>关系图谱</h2>
-            <span>按学习顺序连接</span>
+            <span>前置依赖 · 学习顺序</span>
           </div>
           <div className="knowledge-graph" data-testid="knowledge-graph">
-            <svg className="graph-lines" viewBox="0 0 100 100" aria-hidden="true">
+            <svg
+              className="graph-lines"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <defs>
+                <marker
+                  id="graph-arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" />
+                </marker>
+              </defs>
               {data.relations.map((relation) => {
                 const fromIndex = data.concepts.findIndex((concept) => concept.id === relation.source);
                 const toIndex = data.concepts.findIndex((concept) => concept.id === relation.target);
                 if (fromIndex < 0 || toIndex < 0) return null;
                 const from = nodePosition(fromIndex, data.concepts.length);
                 const to = nodePosition(toIndex, data.concepts.length);
+                const isPrerequisite = relation.type === 'prerequisite';
                 return (
                   <line
                     key={relation.id}
+                    className={`graph-line ${isPrerequisite ? 'prerequisite' : 'sequence'}`}
                     x1={Number.parseFloat(from.left)}
                     y1={Number.parseFloat(from.top)}
                     x2={Number.parseFloat(to.left)}
                     y2={Number.parseFloat(to.top)}
+                    markerEnd={isPrerequisite ? 'url(#graph-arrow)' : undefined}
                   />
                 );
               })}
@@ -156,6 +203,31 @@ export default function KnowledgePage() {
             })}
             {data.concepts.length === 0 && <p className="graph-empty">完成一个章节后，这里会出现你的知识关系。</p>}
           </div>
+
+          <div className="graph-legend">
+            <span className="legend-item">
+              <i className="legend-line prerequisite" aria-hidden="true" />
+              前置依赖
+            </span>
+            <span className="legend-item">
+              <i className="legend-line sequence" aria-hidden="true" />
+              学习顺序
+            </span>
+          </div>
+
+          {unresolved.length > 0 && (
+            <div className="graph-external" data-testid="knowledge-external">
+              <strong>教材中未出现的前置概念</strong>
+              <ul>
+                {unresolved.map((item) => (
+                  <li key={item.name}>
+                    <span className="external-name">{item.name}</span>
+                    <span className="external-note">{item.requiredBy.join('、')} 依赖它</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
 
         <aside className="concept-detail">
@@ -168,6 +240,25 @@ export default function KnowledgePage() {
                 <span>{selected.chapterTitle}</span>
                 <span>{selected.mastery}% 掌握度</span>
               </div>
+              {selected.prerequisites?.length > 0 && (
+                <div className="detail-prereq">
+                  <span className="detail-label">前置概念</span>
+                  <div className="prereq-chips">
+                    {selected.prerequisites.map((name) => {
+                      const target = conceptByTitle.get(name);
+                      return target ? (
+                        <button key={name} className="prereq-chip" onClick={() => setSelectedId(target.id)}>
+                          {name}
+                        </button>
+                      ) : (
+                        <span key={name} className="prereq-chip external" title="教材中未找到该前置概念">
+                          {name}（教材外）
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {selected.sourceId ? (
                 <button
                   className="detail-action"
