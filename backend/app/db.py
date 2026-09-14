@@ -121,7 +121,13 @@ class Database:
     #: 建表后补加的列。`CREATE TABLE IF NOT EXISTS` 不会给**已存在**的表加列，
     #: 而开发机与演示机上的库都是早就建好的，所以必须显式补一次，
     #: 否则升级后老库一插就报 `no such column`。
-    _ADDED_COLUMNS = (("books", "content_warning", "TEXT DEFAULT ''"),)
+    _ADDED_COLUMNS = (
+        ("books", "content_warning", "TEXT DEFAULT ''"),
+        # 上传的原始文件：来源格式 + 文件名（只存 basename，不含目录）。
+        # 存 basename 而不是绝对路径，换 AI_READER_DATA_DIR 后老记录照样解析得到。
+        ("books", "source_format", "TEXT DEFAULT ''"),
+        ("books", "source_name", "TEXT DEFAULT ''"),
+    )
 
     def init(self) -> None:
         with self.connect() as conn:
@@ -164,10 +170,11 @@ class Database:
     def add_book(self, book: Dict[str, Any]) -> None:
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO books(id,title,author,note,progress_pct,content_warning,created_at) "
-                "VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO books(id,title,author,note,progress_pct,content_warning,"
+                "source_format,source_name,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (book["id"], book["title"], book.get("author", ""), book.get("note", ""),
                  book.get("progress_pct", 0.0), book.get("content_warning", ""),
+                 book.get("source_format", ""), book.get("source_name", ""),
                  book.get("created_at", "")),
             )
 
@@ -181,8 +188,8 @@ class Database:
         """在一个事务中写入教材及其章节、段落、锚点。"""
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO books(id,title,author,note,progress_pct,content_warning,created_at) "
-                "VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO books(id,title,author,note,progress_pct,content_warning,"
+                "source_format,source_name,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     book["id"],
                     book["title"],
@@ -190,6 +197,8 @@ class Database:
                     book.get("note", ""),
                     book.get("progress_pct", 0.0),
                     book.get("content_warning", ""),
+                    book.get("source_format", ""),
+                    book.get("source_name", ""),
                     book.get("created_at", ""),
                 ),
             )
@@ -229,6 +238,18 @@ class Database:
     def set_progress(self, book_id: str, pct: float) -> None:
         with self.connect() as conn:
             conn.execute("UPDATE books SET progress_pct=? WHERE id=?", (pct, book_id))
+
+    def set_book_source(self, book_id: str, fmt: str, source_name: str) -> None:
+        """记下原始文件的来源格式与文件名（basename）。
+
+        落盘在 `ingest_file_bytes` 里完成后才调用，因此库里不会有「记了名字但没有文件」
+        的记录；反过来文件写了而这一步失败，也只是一个无人引用的孤立文件，不影响阅读。
+        """
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE books SET source_format=?, source_name=? WHERE id=?",
+                (fmt, source_name, book_id),
+            )
 
     # ---------- 章节 ----------
     def add_chapters(self, chapters: List[Dict[str, Any]]) -> None:

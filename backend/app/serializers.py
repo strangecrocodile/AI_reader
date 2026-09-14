@@ -20,6 +20,10 @@ def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
         # 解析受限提示（跳过了表格/文本框/图片、正文过少等）。前端据此提醒用户
         # 「内容可能没被完整读取」；为空串表示解析正常。
         "contentWarning": book.get("content_warning", "") or "",
+        # 原文件信息：`hasSource` 为假表示这本没有留存原文件（早于该功能上线时导入），
+        # 前端据此把「下载原文件」置灰，而不是给一个必然 404 的链接。
+        "hasSource": bool((book.get("source_name") or "").strip()),
+        "sourceFormat": book.get("source_format", "") or "",
         "progressText": f"{pct}% 已完成",
         "tag": book["title"][:8],
         "cover": {
@@ -39,7 +43,9 @@ def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
 def _plan_to_frontend(plan: Dict) -> Dict[str, Any]:
     items = plan.get("items") or []
     total_min = sum(i.get("duration_minutes", 0) for i in items)
-    head = items[0]
+    # 空计划是合法状态（教材一章节都没有时），不能直接取 items[0]——那会让
+    # 教材详情接口 500，而不是返回一个「还没有学习单元」的正常响应。
+    head = items[0] if items else None
     goal = head.get("goal", "跟随章节顺序完成学习。") if head else "跟随章节顺序完成学习。"
     return {
         "eyebrow": "AI 学习路径",

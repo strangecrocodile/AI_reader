@@ -64,7 +64,14 @@ def skipped_notes(document) -> List[str]:
     return found
 
 
-def parse_docx_bytes(data: bytes, default_title: str = "未命名教材") -> ParsedBook:
+def parse_docx_bytes(
+    data: bytes, default_title: str = "未命名教材", assets_dir=None
+) -> ParsedBook:
+    """解析 .docx 字节流。
+
+    `assets_dir` 给出时，文档内嵌图片会落盘到该目录（阶段 3 启用）；为 None
+    则纯文本解析、不产生任何文件。参数先占位，让 ingest 的调用契约现在就稳定。
+    """
     document = Document(io.BytesIO(data))
     rows = rows_of(document)
 

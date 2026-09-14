@@ -12,6 +12,11 @@ class Settings:
         default_dir = Path(__file__).resolve().parent.parent / "data"
         self.data_dir = Path(os.getenv("AI_READER_DATA_DIR", str(default_dir)))
         self.db_path = Path(os.getenv("AI_READER_DB", str(self.data_dir / "ai_reader.db")))
+        # 上传的原始教材文件：保留原字节流，「下载原文件」与「重新解析」都靠它。
+        # 必须是 data_dir 的相对子目录，换部署目录时不用改库里的记录。
+        self.sources_dir = self.data_dir / "sources"
+        # 从原文件抽出的插图（PDF 内嵌图片等），由 /assets 静态挂载对外提供。
+        self.assets_dir = self.data_dir / "assets"
         # LLM：OpenAI 兼容接口（DeepSeek / SiliconFlow / 通义等均可）
         self.llm_base_url = os.getenv("LLM_BASE_URL", "").rstrip("/")
         self.llm_api_key = os.getenv("LLM_API_KEY", "")

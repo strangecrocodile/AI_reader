@@ -178,7 +178,14 @@ def _detect_heading_y(page, body_size: float) -> dict:
     return result
 
 
-def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> ParsedBook:
+def parse_pdf_stream(
+    data: bytes, default_title: str = "未命名教材", assets_dir=None
+) -> ParsedBook:
+    """解析 PDF 字节流。
+
+    `assets_dir` 给出时，页内插图会抽取落盘到该目录（阶段 3 启用）；为 None
+    则纯文本解析、不产生任何文件。参数先占位，让 ingest 的调用契约现在就稳定。
+    """
     doc = fitz.open(stream=data, filetype="pdf")
     try:
         n_pages = doc.page_count

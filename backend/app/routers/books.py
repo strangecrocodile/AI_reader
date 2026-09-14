@@ -4,13 +4,19 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from ..models import AskRequest, EventRequest, ProgressRequest, ThreadRequest
 from ..serializers import book_meta, chapter_content
 from ..services import threads as thread_service
 from ..services.ask import answer_question, stream_answer
-from ..services.ingest import SUPPORTED_MESSAGE, detect_format, ingest_file_bytes
+from ..services.ingest import (
+    SOURCE_MEDIA_TYPES,
+    SUPPORTED_MESSAGE,
+    detect_format,
+    ingest_file_bytes,
+    source_path_of,
+)
 from ..services.knowledge import get_knowledge
 from ..services.progress import record_event
 
@@ -52,7 +58,7 @@ async def upload_book(
     title: str = Form(""),
 ):
     """上传教材（PDF / Word / 纯文本）：解析目录/章节/段落并入库。"""
-    db, llm, retrieval, _ = _state(request)
+    db, llm, retrieval, settings = _state(request)
     filename = file.filename or ""
     data = await file.read()
     if not data:
@@ -67,12 +73,37 @@ async def upload_book(
             filename=filename,
             content_type=file.content_type or "",
             default_title=fallback_title,
+            settings=settings,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"解析失败：{e}") from e
     retrieval.invalidate_book(info["id"])
     book = db.get_book(info["id"])
     return book_meta(db, llm, book)
+
+
+@router.get("/api/books/{book_id}/source")
+def get_book_source(book_id: str, request: Request):
+    """下载教材原始文件（上传时留存的字节流）。
+
+    老教材（本次改动之前入库的）没有原文件，返回 404 并说明原因，
+    前端据此把「下载原文件」按钮置灰，而不是给一个坏链接。
+    """
+    db, _, _, settings = _state(request)
+    book = db.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="教材不存在")
+    path = source_path_of(db, book, settings)
+    if path is None:
+        raise HTTPException(status_code=404, detail="这本教材没有留存原文件（早于该功能上线时导入）")
+    fmt = (book.get("source_format") or "").lower()
+    media_type = SOURCE_MEDIA_TYPES.get(fmt, "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type="attachment",
+    )
 
 
 @router.get("/api/books/{book_id}/chapters/{chapter_id}")

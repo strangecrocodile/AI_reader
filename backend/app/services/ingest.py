@@ -21,6 +21,13 @@ TEXT = "text"
 SUPPORTED_MESSAGE = "目前支持 PDF / Word(.docx) / 纯文本(.txt/.md) 教材；.doc 请先另存为 .docx"
 _TEXT_SUFFIXES = (".txt", ".md", ".markdown")
 
+#: 「下载原文件」的响应 MIME；未知格式退化成二进制流，浏览器会当附件下载。
+SOURCE_MEDIA_TYPES = {
+    PDF: "application/pdf",
+    DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    TEXT: "text/plain; charset=utf-8",
+}
+
 #: 正文总字数低于这个数就提示「内容可能没读全」。
 #: 阈值取值有依据：团队自己的样例教材（kb-agent 的 `sample_book.docx`）正文只有 523 字，
 #: 是合法可用的薄教材，不能被误报；而「正文全在表格 / 文本框里」的文档解析出来是 433 字。
@@ -48,12 +55,18 @@ def detect_format(filename: str = "", content_type: str = "") -> Optional[str]:
     return None
 
 
-def parse_bytes(fmt: str, data: bytes, default_title: str = "未命名教材"):
-    """按格式解析为 ParsedBook（章节 → 段落，段落为最小锚点粒度）。"""
+def parse_bytes(
+    fmt: str, data: bytes, default_title: str = "未命名教材", assets_dir: Optional[Path] = None
+):
+    """按格式解析为 ParsedBook（章节 → 段落，段落为最小锚点粒度）。
+
+    `assets_dir` 给出时，解析器把抽出的插图落盘到该目录（PDF 内嵌图片等）；
+    为 None 则只解析文本，不产生任何文件——单元测试默认走这条路径。
+    """
     if fmt == PDF:
-        return parse_pdf_stream(data, default_title)
+        return parse_pdf_stream(data, default_title, assets_dir)
     if fmt == DOCX:
-        return parse_docx_bytes(data, default_title)
+        return parse_docx_bytes(data, default_title, assets_dir)
     if fmt == TEXT:
         return parse_text_bytes(data, default_title)
     raise ValueError(SUPPORTED_MESSAGE)
@@ -89,19 +102,20 @@ def backfill_content_warnings(db: Database) -> int:
     return db.backfill_content_warning(low_content_warning)
 
 
-def ingest_file_bytes(
+def parse_and_store(
     db: Database,
-    file_bytes: bytes,
-    filename: str = "",
-    content_type: str = "",
+    fmt: str,
+    data: bytes,
     default_title: str = "未命名教材",
+    assets_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """解析并入库任意受支持格式，返回教材元信息（含章节）。"""
-    fmt = detect_format(filename, content_type)
-    if fmt is None:
-        raise ValueError(SUPPORTED_MESSAGE)
+    """解析字节流并入库，返回教材元信息（含章节）。
 
-    parsed = parse_bytes(fmt, file_bytes, default_title)
+    **只负责解析与入库，不落盘**——落盘是 `ingest_file_bytes` 的事。
+    这样「原文件是否留存」与「能否解析」解耦：先解析，全书读不出来就整体失败，
+    不会在磁盘上留下一个对应的空教材文件。
+    """
+    parsed = parse_bytes(fmt, data, default_title, assets_dir)
     if not parsed.chapters:
         raise ValueError("未能从文件中识别出章节内容")
 
@@ -164,6 +178,54 @@ def ingest_file_bytes(
         "contentWarning": book_row["content_warning"],
         "chapters": chapter_rows,
     }
+
+
+def ingest_file_bytes(
+    db: Database,
+    file_bytes: bytes,
+    filename: str = "",
+    content_type: str = "",
+    default_title: str = "未命名教材",
+    settings=None,
+) -> Dict[str, Any]:
+    """解析并入库任意受支持格式，返回教材元信息（含章节）。
+
+    解析成功后把**原始字节流**留在 `data/sources/{book_id}.{fmt}` 里，并在 books
+    上记下来源格式与文件名。留原文件有两个用途：一是「下载原文件」让用户能对照原书；
+    二是以后想重新解析（换切段规则、补富文本）不必让用户重新上传。
+    """
+    fmt = detect_format(filename, content_type)
+    if fmt is None:
+        raise ValueError(SUPPORTED_MESSAGE)
+
+    assets_dir = Path(settings.assets_dir) if settings is not None else None
+    info = parse_and_store(db, fmt, file_bytes, default_title, assets_dir)
+
+    source_name = ""
+    if settings is not None:
+        sources_dir = Path(settings.sources_dir)
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        source_name = f"{info['id']}.{fmt}"
+        (sources_dir / source_name).write_bytes(file_bytes)
+        db.set_book_source(info["id"], fmt, source_name)
+        info["sourceName"] = source_name
+
+    info["sourceBytes"] = len(file_bytes)
+    return info
+
+
+def source_path_of(db: Database, book: Dict[str, Any], settings) -> Optional[Path]:
+    """教材原始文件的落盘位置；没留存或文件已丢失时返回 None。
+
+    `source_name` 存的是 basename（见 `db._ADDED_COLUMNS`），所以这里再取一次
+    `Path(...).name` 做纵深防御：即便库里的值被改成了带目录的路径，也只会解析到
+    `sources_dir` 之内，不会读到任意文件。
+    """
+    name = Path(book.get("source_name") or "").name
+    if not name:
+        return None
+    path = Path(settings.sources_dir) / name
+    return path if path.is_file() else None
 
 
 def _now() -> str:
