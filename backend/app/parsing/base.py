@@ -65,6 +65,9 @@ class ParsedChapter:
 class ParsedBook:
     title: str
     chapters: List[ParsedChapter]
+    #: 解析受限说明（跳过了什么、章节是靠什么推断的）。前端据此提示用户
+    #: 「内容可能没被完整读取」，而不是让人对着一本空教材猜原因。
+    notes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -219,10 +222,15 @@ def build_blocks(rows: List[Tuple[str, int]]) -> List[Block]:
     return blocks
 
 
-def assemble_book(title: str, blocks: List[Block], default_title: str = "未命名教材") -> ParsedBook:
+def assemble_book(
+    title: str,
+    blocks: List[Block],
+    default_title: str = "未命名教材",
+    notes: Optional[List[str]] = None,
+) -> ParsedBook:
     """把「章 → 段落」中间态装配成 ParsedBook：编号、虚拟页码、过滤空章。"""
     book_title = (title or "").strip() or default_title
-    book = ParsedBook(title=book_title, chapters=[])
+    book = ParsedBook(title=book_title, chapters=[], notes=list(notes or []))
     chars_used = 0
     for block in blocks:
         chapter = ParsedChapter(

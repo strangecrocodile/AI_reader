@@ -30,6 +30,10 @@ WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 HEADING_MAX_LEN = 40
 HEADING_MIN_SIZE_RATIO = 1.18
 HEADING_PAGE_HEIGHT = 120  # 页面前 1/12 视为页眉，忽略
+#: 无书签时最多扫描多少页找标题（全书扫描在大部头上太慢，这里做取舍）
+HEADING_SCAN_PAGES = 200
+#: 平均每页少于这么多字，认为文本层异常（多半是扫描件）
+SPARSE_CHARS_PER_PAGE = 40
 
 # 章标题模式（第1章 / 第1节 / Chapter 1 / Part 1 / 附录A）。
 # PDF 目录书签里「节」也可能单独成层，所以这里保留「节」；Word 大纲另有更细的层级可用。
@@ -194,6 +198,7 @@ def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> Par
 
         # 1) 目录书签 → 章节；2) 标题启发式
         toc = doc.get_toc()
+        notes: List[str] = []
         chapter_marks = []  # [(page0, title)]
         if toc:
             level = _pick_chapter_level(toc)
@@ -208,7 +213,14 @@ def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> Par
                 seen.add(key)
                 chapter_marks.append((pno, title))
         if not chapter_marks:
-            for pno in range(min(n_pages, 200)):
+            if n_pages > HEADING_SCAN_PAGES:
+                notes.append(
+                    f"PDF 没有目录书签，只在前 {HEADING_SCAN_PAGES} 页里按字号找章节标题，"
+                    "靠后的章节可能没有被识别出来"
+                )
+            else:
+                notes.append("PDF 没有目录书签，章节是按字号大小推断的，标题层级可能不准确")
+            for pno in range(min(n_pages, HEADING_SCAN_PAGES)):
                 page = doc[pno]
                 heading_y = _detect_heading_y(page, body_size)
                 ys = sorted(heading_y)
@@ -221,6 +233,11 @@ def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> Par
         # 标题优先级：PDF 元数据 → 首页首个非数字行 → 默认名
         meta_title = (doc.metadata or {}).get("title", "").strip()
         page_texts = [doc[i].get_text("text") for i in range(n_pages)]
+        total_chars = sum(len(t.strip()) for t in page_texts)
+        if n_pages >= 3 and total_chars / n_pages < SPARSE_CHARS_PER_PAGE:
+            notes.append(
+                "PDF 几乎提取不到文字，可能是扫描件或图片版（没有文本层），这类文件无法用于检索问答"
+            )
         first_page_head = next(
             (ln.strip() for ln in page_texts[0].splitlines() if ln.strip() and not re.fullmatch(r"[\d\s\-—.]+", ln.strip())),
             "",
@@ -253,6 +270,6 @@ def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> Par
                 first.text = _strip_title_prefix(first.text, ch.title) or first.text
 
         chapters = [c for c in chapters if c.sections]
-        return ParsedBook(title=title, chapters=chapters)
+        return ParsedBook(title=title, chapters=chapters, notes=notes)
     finally:
         doc.close()

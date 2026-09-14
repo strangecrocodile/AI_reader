@@ -21,6 +21,12 @@ TEXT = "text"
 SUPPORTED_MESSAGE = "目前支持 PDF / Word(.docx) / 纯文本(.txt/.md) 教材；.doc 请先另存为 .docx"
 _TEXT_SUFFIXES = (".txt", ".md", ".markdown")
 
+#: 正文总字数低于这个数就提示「内容可能没读全」。
+#: 阈值取值有依据：团队自己的样例教材（kb-agent 的 `sample_book.docx`）正文只有 523 字，
+#: 是合法可用的薄教材，不能被误报；而「正文全在表格 / 文本框里」的文档解析出来是 433 字。
+#: 字数只负责触发提醒，**真正说明原因的是解析器报告的结构信号**（见 `ParsedBook.notes`）。
+LOW_CONTENT_CHARS = 500
+
 
 def detect_format(filename: str = "", content_type: str = "") -> Optional[str]:
     """按扩展名判断来源格式；扩展名缺失或不可识别时退回 content-type。"""
@@ -53,6 +59,25 @@ def parse_bytes(fmt: str, data: bytes, default_title: str = "未命名教材"):
     raise ValueError(SUPPORTED_MESSAGE)
 
 
+def content_warning_of(parsed) -> str:
+    """汇总「内容可能没被完整读取」的提示；一切正常时返回空串。
+
+    两类信号合起来用：解析器报告**跳过了什么**（表格 / 文本框 / 图片，是根因），
+    以及正文总字数是否低到不正常（是用户能直接感知到的症状）。
+    """
+    notes: List[str] = []
+    chars = sum(
+        len(section.text)
+        for chapter in parsed.chapters
+        for section in chapter.sections
+        if section.kind != "heading"
+    )
+    if chars < LOW_CONTENT_CHARS:
+        notes.append(f"整本教材只解析出 {chars} 个字的正文，内容可能大部分没被读出来")
+    notes.extend(parsed.notes or [])
+    return "；".join(notes)
+
+
 def ingest_file_bytes(
     db: Database,
     file_bytes: bytes,
@@ -76,6 +101,7 @@ def ingest_file_bytes(
         "author": "",
         "note": f"来源格式：{fmt}",
         "progress_pct": 0.0,
+        "content_warning": content_warning_of(parsed),
         "created_at": _now(),
     }
 
@@ -124,6 +150,7 @@ def ingest_file_bytes(
         "id": book_id,
         "title": parsed.title,
         "format": fmt,
+        "contentWarning": book_row["content_warning"],
         "chapters": chapter_rows,
     }
 

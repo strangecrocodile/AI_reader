@@ -17,6 +17,9 @@ def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
         "author": book.get("author", "") or "来源：用户导入",
         "edition": "",
         "note": book.get("note", ""),
+        # 解析受限提示（跳过了表格/文本框/图片、正文过少等）。前端据此提醒用户
+        # 「内容可能没被完整读取」；为空串表示解析正常。
+        "contentWarning": book.get("content_warning", "") or "",
         "progressText": f"{pct}% 已完成",
         "tag": book["title"][:8],
         "cover": {

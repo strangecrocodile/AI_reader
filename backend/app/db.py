@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS books (
   author TEXT DEFAULT '',
   note TEXT DEFAULT '',
   progress_pct REAL DEFAULT 0,
+  content_warning TEXT DEFAULT '',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chapters (
@@ -117,17 +118,28 @@ class Database:
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
+    #: 建表后补加的列。`CREATE TABLE IF NOT EXISTS` 不会给**已存在**的表加列，
+    #: 而开发机与演示机上的库都是早就建好的，所以必须显式补一次，
+    #: 否则升级后老库一插就报 `no such column`。
+    _ADDED_COLUMNS = (("books", "content_warning", "TEXT DEFAULT ''"),)
+
     def init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            for table, column, decl in self._ADDED_COLUMNS:
+                existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # ---------- 教材 ----------
     def add_book(self, book: Dict[str, Any]) -> None:
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO books(id,title,author,note,progress_pct,created_at) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO books(id,title,author,note,progress_pct,content_warning,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
                 (book["id"], book["title"], book.get("author", ""), book.get("note", ""),
-                 book.get("progress_pct", 0.0), book.get("created_at", "")),
+                 book.get("progress_pct", 0.0), book.get("content_warning", ""),
+                 book.get("created_at", "")),
             )
 
     def add_book_bundle(
@@ -140,13 +152,15 @@ class Database:
         """在一个事务中写入教材及其章节、段落、锚点。"""
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO books(id,title,author,note,progress_pct,created_at) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO books(id,title,author,note,progress_pct,content_warning,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
                 (
                     book["id"],
                     book["title"],
                     book.get("author", ""),
                     book.get("note", ""),
                     book.get("progress_pct", 0.0),
+                    book.get("content_warning", ""),
                     book.get("created_at", ""),
                 ),
             )

@@ -1,7 +1,11 @@
 """API 集成测试：导入 → 列表 → 章节内容（讲解/大纲）→ 溯源问答 → 规划 → 掌握度事件。"""
+import io
 import json
+import sqlite3
 
 import pytest
+
+from app.db import Database
 
 
 def _upload(client, data):
@@ -757,3 +761,68 @@ def test_stream_fallback_answer_stays_grounded(client):
     assert "Δx" not in answer
     assert "列表" in answer
     assert done["sources"]
+
+
+# ---------- 解析受限提示：上传后告诉用户「内容可能没读全」 ----------
+
+
+def test_upload_reports_content_warning_when_text_hides_in_tables(client):
+    """正文全在表格里时，上传响应必须带上 contentWarning，而不是让用户自己去猜。"""
+    from docx import Document as _Document
+
+    document = _Document()
+    document.add_heading("第1章 测试", level=1)
+    document.add_paragraph("短短一句话。")
+    document.add_table(rows=3, cols=2)
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    resp = client.post(
+        "/api/books",
+        files={
+            "file": (
+                "course.docx",
+                buffer.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+
+    assert resp.status_code == 201, resp.text
+    warning = resp.json()["contentWarning"]
+    assert "个字" in warning and "表格" in warning
+    # 提示要能一路带到列表接口（刷新页面后仍然看得到）
+    listed = next(b for b in client.get("/api/books").json() if b["id"] == resp.json()["id"])
+    assert listed["contentWarning"] == warning
+
+
+def test_upload_leaves_content_warning_empty_for_normal_textbook(client, demo_pdf_bytes):
+    """正常教材不能挂着一条多余告警——否则用户会学会忽略它。"""
+    assert _upload(client, demo_pdf_bytes)["contentWarning"] == ""
+
+
+def test_init_migrates_content_warning_onto_existing_database(tmp_path):
+    """升级场景：老库的 books 表没有 content_warning，init() 必须补上而不是报错。
+
+    `CREATE TABLE IF NOT EXISTS` 不会给已存在的表加列，而演示机和开发机上的库
+    都是早就建好的——少了这一步，升级后第一次上传就会 `no such column`。
+    """
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE books ("
+        "id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT DEFAULT '', note TEXT DEFAULT '',"
+        "progress_pct REAL DEFAULT 0, created_at TEXT NOT NULL)"  # 就是缺 content_warning
+    )
+    conn.execute(
+        "INSERT INTO books(id, title, created_at) VALUES('b1', '老板教材', '2026-01-01T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    db.init()
+
+    assert db.get_book("b1")["content_warning"] == ""  # 老数据保留，新列取默认值
+    db.add_book({"id": "b2", "title": "新教材", "content_warning": "只解析出 6 个字"})
+    assert db.get_book("b2")["content_warning"] == "只解析出 6 个字"

@@ -11,7 +11,15 @@ from docx import Document
 from app.parsing.base import CHARS_PER_PAGE, Block, assemble_book, build_blocks, chapter_level_of
 from app.parsing.docx import parse_docx_bytes
 from app.parsing.text import decode_bytes, parse_text_bytes, read_rows
-from app.services.ingest import DOCX, PDF, TEXT, detect_format, parse_bytes
+from app.services.ingest import (
+    DOCX,
+    LOW_CONTENT_CHARS,
+    PDF,
+    TEXT,
+    content_warning_of,
+    detect_format,
+    parse_bytes,
+)
 
 
 def _docx(paragraphs) -> bytes:
@@ -24,6 +32,13 @@ def _docx(paragraphs) -> bytes:
             document.add_heading(text, level=int(style.split()[1]))
         else:
             document.add_paragraph(text)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _save(document) -> bytes:
+    """把已组装的 Document 存成 bytes（需要表格/图片时用它，`_docx` 只加段落）。"""
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
@@ -250,3 +265,48 @@ def test_detect_format_by_extension_and_content_type():
 def test_parse_bytes_rejects_unknown_format():
     with pytest.raises(ValueError, match="docx"):
         parse_bytes("nope", b"data", "书名")
+
+
+# ---------- 解析受限提示（content_warning 的根因信号） ----------
+
+
+def test_clean_docx_reports_no_skipped_content():
+    """全部内容都在正文段落里 → 不报任何「跳过了什么」。"""
+    book = parse_docx_bytes(_docx([("Heading 1", "第1章 测试"), ("Normal", "正文段落。")]))
+
+    assert book.notes == []
+
+
+def test_docx_reports_skipped_table():
+    """表格里的文字 `doc.paragraphs` 读不到，必须如实报告数量。"""
+    document = Document()
+    document.add_heading("第1章 测试", level=1)
+    document.add_paragraph("正文段落。")
+    document.add_table(rows=2, cols=2)
+
+    book = parse_docx_bytes(_save(document))
+
+    assert book.notes == ["1 个表格"]
+    # 报告的数字要和实际丢失的内容对得上：表格文字确实一个字都没进正文
+    assert all("表格" not in chapter.full_text for chapter in book.chapters)
+
+
+def test_content_warning_flags_book_whose_text_hides_in_tables():
+    """用户实际遇到的那个情况：正文都在表格里，整本只解析出几十个字。"""
+    document = Document()
+    document.add_heading("第1章 测试", level=1)
+    document.add_paragraph("短短一句话。")
+    document.add_table(rows=3, cols=2)
+
+    warning = content_warning_of(parse_docx_bytes(_save(document)))
+
+    assert "6 个字" in warning  # 症状：用户能直接感知的
+    assert "1 个表格" in warning  # 根因：解析器跳过了什么
+
+
+def test_content_warning_does_not_fire_on_thin_but_valid_textbook():
+    """薄教材是合法的：kb-agent 样例书正文只有 523 字，不能被误报。"""
+    body = "教" * (LOW_CONTENT_CHARS + 23)  # 与样例书正文同量级
+    book = parse_docx_bytes(_docx([("Heading 1", "第1章 测试"), ("Normal", body)]))
+
+    assert content_warning_of(book) == ""

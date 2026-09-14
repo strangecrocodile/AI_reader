@@ -6,7 +6,8 @@
 - 没有标题样式时退回文本模式（第X章 / Chapter N / 附录A，见 base.build_blocks）；
 - Word 没有物理页码，段落页号为按字数的**虚拟页码**（见 base 模块说明）。
 
-说明：仅读取正文段落（`doc.paragraphs`），表格内容暂不解析。
+说明：**只读得到正文顶层段落**（`doc.paragraphs`）——表格、文本框、图片里的文字
+一律读不到，它们由 `skipped_notes()` 计数后写进 `ParsedBook.notes`，上传后提示用户。
 """
 import io
 import re
@@ -19,6 +20,8 @@ from .base import ParsedBook, assemble_book, build_blocks
 _HEADING_RE = re.compile(r"^Heading\s+(\d+)$", re.IGNORECASE)
 #: 视为书名的 Word 样式
 _TITLE_STYLES = ("title", "subtitle")
+#: WordprocessingML 命名空间：直接查 XML 里的表格 / 文本框 / 图片节点
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def _level_of(style_name: str) -> int:
@@ -29,7 +32,11 @@ def _level_of(style_name: str) -> int:
 
 def read_rows(data: bytes) -> List[Tuple[str, int, str]]:
     """读出 [(段落文本, 层级, 样式名)]，跳过空段。"""
-    document = Document(io.BytesIO(data))
+    return rows_of(Document(io.BytesIO(data)))
+
+
+def rows_of(document) -> List[Tuple[str, int, str]]:
+    """从已打开的文档读出段落行（parse 与「跳过了什么」共用同一个 Document）。"""
     rows: List[Tuple[str, int, str]] = []
     for paragraph in document.paragraphs:
         text = (paragraph.text or "").strip()
@@ -40,8 +47,26 @@ def read_rows(data: bytes) -> List[Tuple[str, int, str]]:
     return rows
 
 
+def skipped_notes(document) -> List[str]:
+    """报告解析器**读不到**的内容，供上传后提示用。
+
+    `doc.paragraphs` 只覆盖正文顶层段落，下面这三类里都有文字但读不到，
+    也正是「上传后整本书只剩几百字」最常见的原因。
+    """
+    def count(tag: str) -> int:
+        return len(document.element.body.findall(f".//{{{_W_NS}}}{tag}"))
+
+    found: List[str] = []
+    for tag, label in (("tbl", "个表格"), ("txbxContent", "个文本框"), ("drawing", "张图片")):
+        total = count(tag)
+        if total:
+            found.append(f"{total} {label}")
+    return found
+
+
 def parse_docx_bytes(data: bytes, default_title: str = "未命名教材") -> ParsedBook:
-    rows = read_rows(data)
+    document = Document(io.BytesIO(data))
+    rows = rows_of(document)
 
     title = ""
     body: List[Tuple[str, int]] = []
@@ -51,4 +76,4 @@ def parse_docx_bytes(data: bytes, default_title: str = "未命名教材") -> Par
             continue
         body.append((text, level))
 
-    return assemble_book(title, build_blocks(body), default_title)
+    return assemble_book(title, build_blocks(body), default_title, notes=skipped_notes(document))
