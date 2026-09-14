@@ -131,6 +131,35 @@ class Database:
                 if column not in existing:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
+    def backfill_content_warning(self, warning_of) -> int:
+        """给升级前入库、还没写过提示的教材补一次；返回补了几本。
+
+        这些书的问题就摆在数据里（正文只有几百字），但上传时还没有这个字段，
+        不回填的话用户永远看不到提示——而它们恰恰最需要提醒：教材本身就读不全，
+        重新上传同一份文件也不会有别的结果。
+
+        只做**字数**这一项：当初「跳过了几个表格」之类的结构信息没记下来，编不出来。
+        `warning_of(chars)` 由调用方（services.ingest）给文案，阈值口径只留一处，
+        存储层不掺业务判断——返回空串就表示这本不用标记。
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT b.id, COALESCE(SUM(LENGTH(s.text)), 0) AS chars FROM books b "
+                "LEFT JOIN sections s ON s.book_id = b.id AND s.kind != 'heading' "
+                "WHERE COALESCE(b.content_warning, '') = '' "
+                "GROUP BY b.id"
+            ).fetchall()
+            updated = 0
+            for row in rows:
+                text = warning_of(row["chars"])
+                if not text:
+                    continue
+                conn.execute(
+                    "UPDATE books SET content_warning=? WHERE id=?", (text, row["id"])
+                )
+                updated += 1
+            return updated
+
     # ---------- 教材 ----------
     def add_book(self, book: Dict[str, Any]) -> None:
         with self.connect() as conn:

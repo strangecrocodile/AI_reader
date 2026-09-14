@@ -326,6 +326,47 @@
   line-height: 1.6;
 }
 
+/* 上传后「内容可能没被完整读取」的提示：要显眼到让人愿意读完再走 */
+.upload-warning {
+  margin-top: 18px;
+  padding: 16px 18px;
+  background: #fff6e5;
+  border-left: 4px solid var(--orange);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.upload-warning b {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.upload-warning p {
+  margin: 0 0 8px;
+}
+
+.upload-warning-tip {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.warning-ok {
+  border: 0;
+  background: var(--ink);
+  color: white;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.choice-warning {
+  display: inline-block;
+  margin-top: 4px;
+  color: #a8641a;
+  font-size: 12px;
+  font-style: normal;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 900px) {
   .page {

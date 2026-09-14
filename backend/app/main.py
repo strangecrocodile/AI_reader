@@ -18,6 +18,7 @@ from .db import Database
 from .llm.client import CloudLLM, MockLLM
 from .rag.retrieval import RetrievalService
 from .routers import books
+from .services.ingest import backfill_content_warnings
 
 __version__ = "0.1.0"
 
@@ -36,6 +37,9 @@ def create_app(
     settings = settings or default_settings
     db = Database(db_path or settings.db_path)
     db.init()
+    # 补标记升级前入库的「正文过少」教材：它们当时还没有 content_warning 字段，
+    # 但恰恰是最需要提醒的那一批。幂等——已经写过提示的书不会被覆盖。
+    backfill_content_warnings(db)
     llm = llm or _build_llm(settings)
     retrieval = RetrievalService(db, settings)
 

@@ -826,3 +826,121 @@ def test_init_migrates_content_warning_onto_existing_database(tmp_path):
     assert db.get_book("b1")["content_warning"] == ""  # 老数据保留，新列取默认值
     db.add_book({"id": "b2", "title": "新教材", "content_warning": "只解析出 6 个字"})
     assert db.get_book("b2")["content_warning"] == "只解析出 6 个字"
+
+
+def test_backfill_warns_about_thin_books_already_in_the_database(tmp_path):
+    """升级前入库的薄教材也要被标记。
+
+    用户遇到的那本书（433 字）是**升级前**入库的，不回填的话它永远挂着空提示，
+    而重新上传同一份文件也不会有别的结果——恰恰是最该提醒的一批。
+    """
+    from app.services.ingest import backfill_content_warnings
+
+    db = Database(tmp_path / "legacy.db")
+    db.init()
+    sections = [
+        {
+            "id": f"thin-s{i}",
+            "book_id": "thin",
+            "chapter_id": "thin-ch1",
+            "seq": i,
+            "text": "短" * 40,
+            "page": 1,
+            "kind": "p",
+        }
+        for i in range(1, 3)
+    ]
+    db.add_book_bundle(
+        {"id": "thin", "title": "表格里的教材", "created_at": "2026-01-01T00:00:00+00:00"},
+        [
+            {
+                "id": "thin-ch1",
+                "book_id": "thin",
+                "num": 1,
+                "title": "第1章",
+                "page_start": 1,
+                "page_end": 1,
+                "full_text": "".join(s["text"] for s in sections),
+            }
+        ],
+        sections,
+        [
+            {
+                "id": s["id"],
+                "book_id": "thin",
+                "chapter_id": "thin-ch1",
+                "section_id": s["id"],
+                "text": s["text"],
+                "page": s["page"],
+            }
+            for s in sections
+        ],
+    )
+
+    assert backfill_content_warnings(db) == 1
+    assert "80 个字" in db.get_book("thin")["content_warning"]
+
+    # 幂等：再跑一次不再改动，也不会把已有提示覆盖掉
+    assert backfill_content_warnings(db) == 0
+    assert "80 个字" in db.get_book("thin")["content_warning"]
+
+
+def test_backfill_leaves_normal_books_alone(tmp_path):
+    """正常教材不会被回填出多余告警——否则用户会学会忽略这条提示。"""
+    from app.services.ingest import backfill_content_warnings
+
+    db = Database(tmp_path / "normal.db")
+    db.init()
+    text = "教" * 600
+    sections = [
+        {
+            "id": "ok-s1",
+            "book_id": "ok",
+            "chapter_id": "ok-ch1",
+            "seq": 1,
+            "text": text,
+            "page": 1,
+            "kind": "p",
+        }
+    ]
+    db.add_book_bundle(
+        {"id": "ok", "title": "正常教材", "created_at": "2026-01-01T00:00:00+00:00"},
+        [
+            {
+                "id": "ok-ch1",
+                "book_id": "ok",
+                "num": 1,
+                "title": "第1章",
+                "page_start": 1,
+                "page_end": 1,
+                "full_text": text,
+            }
+        ],
+        sections,
+        [
+            {
+                "id": "ok-s1",
+                "book_id": "ok",
+                "chapter_id": "ok-ch1",
+                "section_id": "ok-s1",
+                "text": text,
+                "page": 1,
+            }
+        ],
+    )
+
+    assert backfill_content_warnings(db) == 0
+    assert db.get_book("ok")["content_warning"] == ""
+
+
+def test_content_warning_is_wired_into_app_startup(tmp_path):
+    """回填挂在 `create_app` 上：只写函数不接线，等于没做。"""
+    from app.main import create_app
+
+    path = tmp_path / "wired.db"
+    app = create_app(db_path=path)
+
+    assert app.state.db.get_book("nope") is None  # 空库不报错
+    assert Database(path).connect().execute(
+        "SELECT COUNT(*) FROM books WHERE content_warning IS NULL"
+    ).fetchone()[0] == 0

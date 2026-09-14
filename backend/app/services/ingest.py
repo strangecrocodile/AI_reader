@@ -59,23 +59,34 @@ def parse_bytes(fmt: str, data: bytes, default_title: str = "未命名教材"):
     raise ValueError(SUPPORTED_MESSAGE)
 
 
+def low_content_warning(chars: int) -> str:
+    """正文过少的提示文案；字数正常时返回空串。阈值口径只此一处。"""
+    if chars >= LOW_CONTENT_CHARS:
+        return ""
+    return f"整本教材只解析出 {chars} 个字的正文，内容可能大部分没被读出来"
+
+
 def content_warning_of(parsed) -> str:
     """汇总「内容可能没被完整读取」的提示；一切正常时返回空串。
 
-    两类信号合起来用：解析器报告**跳过了什么**（表格 / 文本框 / 图片，是根因），
-    以及正文总字数是否低到不正常（是用户能直接感知到的症状）。
+    两类信号合起来用：正文总字数低到不正常（用户能直接感知到的症状），
+    以及解析器报告的**跳过了什么**（表格 / 文本框 / 图片，是根因）。
     """
-    notes: List[str] = []
     chars = sum(
         len(section.text)
         for chapter in parsed.chapters
         for section in chapter.sections
         if section.kind != "heading"
     )
-    if chars < LOW_CONTENT_CHARS:
-        notes.append(f"整本教材只解析出 {chars} 个字的正文，内容可能大部分没被读出来")
+    symptom = low_content_warning(chars)
+    notes: List[str] = [symptom] if symptom else []
     notes.extend(parsed.notes or [])
     return "；".join(notes)
+
+
+def backfill_content_warnings(db: Database) -> int:
+    """给升级前入库的教材补一次提示（这些书当时还没有这个字段）。"""
+    return db.backfill_content_warning(low_content_warning)
 
 
 def ingest_file_bytes(
