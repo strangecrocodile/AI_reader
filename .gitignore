@@ -46,5 +46,5 @@ __pycache__/
 backend/.venv/
 backend/.pip-cache/
 backend/data/
-# pytest 临时目录（--basetemp=.pytest_tmp，避免系统临时目录不可用时污染工作区）
+# pytest 临时目录（basetemp 见 backend/pytest.ini）
 backend/.pytest_tmp/

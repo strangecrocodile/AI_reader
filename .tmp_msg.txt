@@ -1,0 +1,11 @@
+test: 固定 pytest basetemp 到工作区，修复 tmp_path 全部 PermissionError
+
+系统临时目录里一旦残留 ACL 异常的 pytest-of-<用户名> 目录（受限环境下会
+出现且删不掉），pytest 就再也建不了 tmp_path，83 个用 tmp_path 的用例
+全部在 setup 阶段 PermissionError: [WinError 5]，与代码无关。
+
+- backend/pytest.ini：新增，addopts 固定 --basetemp=data/.pytest_tmp
+  （相对 rootdir 解析；basetemp 不是 ini 选项，只能经 addopts 传）
+- .gitignore：注释指向 pytest.ini，并确保 backend/.pytest_tmp/ 被忽略
+
+后端测试 135 passed（此前 52 passed / 83 errors）。
