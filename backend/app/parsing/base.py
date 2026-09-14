@@ -12,7 +12,7 @@ PDF（`parsing/pdf.py`）、Word（`parsing/docx.py`）与纯文本（`parsing/t
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 #: 无物理页码的格式（Word / 纯文本）折算虚拟页的字符预算
 CHARS_PER_PAGE = 1200
@@ -40,12 +40,91 @@ _FORMULA_RE = re.compile(r"[=\u2211\u222b\u2192\u2264\u2265]|[a-zA-Z]\s*\(|x\^|_
 FORMULA_MAX_LEN = 80
 
 
+#: 样式 token：粗体 / 斜体 / 上标 / 下标 / 比正文大 / 比正文小。
+#:
+#: 刻意只用**语义 token**，不把 PDF 的字体名（同一本书里就有 SourceHanSerifCN、
+#: STIXTwoText、FZSSJW--GB1-0 好几种）透传到前端——那会变成一组不可控的字体加载，
+#: 而阅读页的观感本就由 .paper 的 CSS 决定。
+STYLE_TOKENS = ("b", "i", "sup", "sub", "lg", "sm")
+
+
+@dataclass(frozen=True)
+class Run:
+    """段落里的一段行内文本及其样式。`text` 为空白的片段不应产出。"""
+
+    text: str
+    style: Tuple[str, ...] = ()
+
+
 @dataclass
 class ParsedSection:
     seq: int
     page: int
     text: str
-    kind: str = "p"  # p | formula | heading
+    kind: str = "p"  # p | formula | heading | image | table
+    #: 富文本内容。为空表示「没有额外版式信息」——渲染层此时把 `text` 当成单个
+    #: 纯文本片段，因此纯文本/Markdown 教材与升级前入库的老数据都不需要迁移。
+    #: 段落为 `{"runs": [{"text": ..., "style": [...]}]}`；表格/图片另有形状（见 phase 3）。
+    content: Optional[Dict[str, Any]] = None
+
+
+def make_run(text: str, *style: str) -> Optional[Run]:
+    """造一个片段；纯空白或空文本返回 None（调用方直接跳过）。
+
+    空白片段对渲染毫无意义，却会让「相邻同样式合并」失效——PDF 提取经常把
+    一个粗体词切成 `'导数' + ' ' + '定义'` 三个 span，中间那个纯空格 span
+    会让前后两个粗体片段无法合并，白白多出两个 DOM 节点。
+    """
+    if not text or not text.strip():
+        return None
+    tokens = tuple(dict.fromkeys(t for t in style if t in STYLE_TOKENS))
+    return Run(text=text, style=tokens)
+
+
+def content_from_text(text: str) -> Dict[str, Any]:
+    """把纯文本包成最小的富文本内容（单片段、无样式）。"""
+    return {"runs": [{"text": text, "style": []}]}
+
+
+def runs_of_content(content: Optional[Dict[str, Any]], text: str) -> List[Dict[str, Any]]:
+    """取内容里的片段列表；没有内容时把 `text` 当成单个无样式片段。
+
+    这是「老数据无需迁移」的落点：解析层只在真有版式信息时才写 `content`。
+    """
+    runs = (content or {}).get("runs")
+    if runs:
+        return runs
+    return content_from_text(text)["runs"]
+
+
+def merge_runs(runs: Iterable[Optional[Run]]) -> List[Run]:
+    """合并相邻且样式相同的片段，并丢掉空片段。
+
+    合并很值得做：PDF 的每个 span 基本就是一小段文字，不合并会让一个普通段落
+    变成几十个 <span>，划词与分页测量的成本都随之上去。
+    """
+    merged: List[Run] = []
+    for run in runs:
+        if run is None or not run.text:
+            continue
+        if merged and merged[-1].style == run.style:
+            merged[-1] = Run(text=merged[-1].text + run.text, style=run.style)
+        else:
+            merged.append(run)
+    return merged
+
+
+def runs_payload(runs: Iterable[Optional[Run]]) -> Optional[Dict[str, Any]]:
+    """把片段列表转成入库/下发的 JSON 形状；没有任何有效片段时返回 None。"""
+    merged = merge_runs(runs)
+    if not merged:
+        return None
+    return {"runs": [{"text": r.text, "style": list(r.style)} for r in merged]}
+
+
+def text_of_runs(runs: Iterable[Dict[str, Any]]) -> str:
+    """片段拼回纯文本。入库前用它断言 `section.text` 不变量。"""
+    return "".join(str(r.get("text", "")) for r in runs)
 
 
 @dataclass
@@ -174,18 +253,28 @@ def chapter_level_of(rows: List[Tuple[str, int]]) -> Optional[int]:
 
 
 def build_blocks(rows: List[Tuple[str, int]]) -> List[Block]:
-    """把 (段落文本, 标题层级) 流切成一章一个 Block。
+    """把 (段落文本, 标题层级[, 富文本内容]) 流切成一章一个 Block。
 
     - 章层级由 `chapter_level_of` 判定；比它更浅的标题（书名 / 篇名）不进正文；
     - 比它更深的标题作为章内小节，kind='heading'；
     - 没有标题层级时退回文本模式（第X章 / Chapter N / 附录A）；
     - 首个章标题之前的内容并入第一章，避免前言丢失；
     - 完全识别不到章时，整本书作为一章（标题由调用方给的书名兜底）。
+
+    第三项可选：只有 Word 这类能读到行内格式的来源才带，Markdown / 纯文本 /
+    PDF 的标题层级通路都只用 (文本, 层级) 两项，行为与以前完全一致。
     """
-    rows = [(text or "", int(level or 0)) for text, level in rows]
-    chapter_level = chapter_level_of(rows)
+    normalized: List[Tuple[str, int, Optional[Dict[str, Any]]]] = []
+    for row in rows:
+        text, level = row[0], row[1]
+        content = row[2] if len(row) > 2 else None
+        normalized.append((text or "", int(level or 0), content))
+    rows = normalized
+    # 章级判定只看 (文本, 层级)——富文本内容是渲染信息，与结构无关。
+    titled = [(text, level) for text, level, _ in rows]
+    chapter_level = chapter_level_of(titled)
     blocks: List[Block] = []
-    front: List[Tuple[str, str]] = []
+    front: List[Tuple[str, str, Optional[Dict[str, Any]]]] = []
 
     def kind_of(text: str, level: int) -> str:
         if chapter_level is not None and level > chapter_level:
@@ -194,7 +283,7 @@ def build_blocks(rows: List[Tuple[str, int]]) -> List[Block]:
             return "heading"
         return "formula" if looks_like_formula(text) else "p"
 
-    for text, level in rows:
+    for text, level, content in rows:
         text = text.strip()
         if not text:
             continue
@@ -209,7 +298,7 @@ def build_blocks(rows: List[Tuple[str, int]]) -> List[Block]:
         if starts_chapter and not is_toc_noise(text):
             blocks.append(Block(title=text, paragraphs=[]))
             continue
-        entry = (text, kind_of(text, level))
+        entry = (text, kind_of(text, level), content)
         if blocks:
             blocks[-1].paragraphs.append(entry)
         else:
@@ -239,14 +328,24 @@ def assemble_book(
             page_start=1,
             page_end=1,
         )
-        for text, kind in block.paragraphs:
+        for entry in block.paragraphs:
+            # 段落元组可选带第三项（富文本内容），让可选项就能让 build_blocks 这类
+            # 只有纯文本的来源（Word 大纲 / Markdown / 纯文本）完全不用改。
+            text, kind = entry[0], entry[1]
+            content = entry[2] if len(entry) > 2 else None
             text = (text or "").strip()
             if not text:
                 continue
             page = 1 + chars_used // CHARS_PER_PAGE
             chars_used += len(text)
             chapter.sections.append(
-                ParsedSection(seq=len(chapter.sections) + 1, page=page, text=text, kind=kind)
+                ParsedSection(
+                    seq=len(chapter.sections) + 1,
+                    page=page,
+                    text=text,
+                    kind=kind,
+                    content=content,
+                )
             )
         if not chapter.sections:
             continue

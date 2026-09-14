@@ -1,23 +1,32 @@
-"""PDF 解析：PyMuPDF 提取文本、目录（书签）与章节结构。
+"""PDF 解析：PyMuPDF 提取文本、目录（书签）、章节结构，以及段落级行内版式。
 
 支持两类 PDF：
 1. 带目录书签（PDF 内置大纲）→ 直接以书签为章节边界；
 2. 无书签 → 通过字号/粗细启发式检测章节标题。
 
-输出 ParsedBook：章节 → 段落（含页码），段落为最小「锚点」粒度。
+输出 ParsedBook：章节 → 段落（含页码），段落为最小「锚点」粒度。每个段落同时带上
+`content.runs`——由 span 的字号/字体名/flags/基线推出的粗体、斜体、上下标与字号档位，
+阅读页据此还原教材的行内版式。`section.text` 仍是片段拼出的纯文本，检索链不受影响。
+
 仅处理文本型 PDF；扫描件/OCR 不在范围内（见产品设计文档）。
 """
 import re
 from collections import defaultdict
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import (
     ParsedBook,
     ParsedChapter,
     ParsedSection,
+    Run,
     is_toc_noise,
     looks_like_formula,
+    make_run,
+    merge_runs,
     pick_heading_level,
+    runs_payload,
+    text_of_runs,
 )
 
 try:
@@ -34,6 +43,11 @@ HEADING_PAGE_HEIGHT = 120  # 页面前 1/12 视为页眉，忽略
 HEADING_SCAN_PAGES = 200
 #: 平均每页少于这么多字，认为文本层异常（多半是扫描件）
 SPARSE_CHARS_PER_PAGE = 40
+#: 相对正文基准字号算「大一号 / 小一号」的阈值
+BODY_BIG_RATIO = 1.15
+BODY_SMALL_RATIO = 0.85
+#: 基线偏移超过字号的这个比例，判定为上下标（PDF 没有直接的上下标标记）
+VERTICAL_RATIO = 0.3
 
 # 章标题模式（第1章 / 第1节 / Chapter 1 / Part 1 / 附录A）。
 # PDF 目录书签里「节」也可能单独成层，所以这里保留「节」；Word 大纲另有更细的层级可用。
@@ -43,6 +57,17 @@ CHAPTER_TITLE_RE = re.compile(
 )
 # 目录点线引导符。要求足够长的连续点/省略号，避免误伤正文里的「……」「⋯⋯」
 DOT_LEADER_RE = re.compile(r"(?:\.\s*){5,}|…{4,}|⋯{4,}")
+
+
+@dataclass(frozen=True)
+class _Base:
+    """全书排版基准，用于相对地判断字号档位。
+
+    PDF 的字号是打印单位，绝对值没有意义（同一本书正文可能是 9.6，也可能 11.5），
+    所以只记正文基准字号，其余字号都相对它判定。
+    """
+
+    body_size: float = 0.0
 
 
 def _pick_chapter_level(toc) -> Optional[int]:
@@ -65,6 +90,35 @@ def _strip_title_prefix(text: str, title: str) -> str:
         if count >= len(title_norm):
             return text[i + 1:].lstrip(" ")
     return text
+
+
+def _strip_prefix_from_content(
+    content: Optional[Dict[str, Any]], stripped_text: str
+) -> Optional[Dict[str, Any]]:
+    """片段前缀与段落纯文本同步剥掉章节标题，保住 `text == "".join(片段)` 不变量。
+
+    段落首段有时会把章节标题和正文提取成同一段，这时 text 被剥了标题，片段若不同步
+    就会出现「渲染出来比 text 多几个字」。做法是从尾部对齐：确定要保留的字符数是
+    `len(stripped_text)`，再从片段尾部倒着取这么多字符，样式逐片段保留。
+    """
+    runs = (content or {}).get("runs")
+    if not runs:
+        return None
+    keep = len(stripped_text)
+    if keep <= 0:
+        return None
+    tail: List[Dict[str, Any]] = []
+    remaining = keep
+    for run in reversed(runs):
+        text = str(run.get("text", ""))
+        if remaining <= 0:
+            break
+        piece = text[-remaining:]
+        remaining -= len(piece)
+        if piece:
+            tail.append({"text": piece, "style": list(run.get("style", []))})
+    tail.reverse()
+    return {"runs": tail} if tail else None
 
 
 # 句末标点。注意包含「．」(U+FF0E 全角句点)：不少中文教材（尤其理工类）用它作句号，
@@ -107,24 +161,197 @@ def _clean_paragraph(text: str) -> str:
     return TRAILING_URL_RE.sub("", text).strip()
 
 
-def _split_paragraphs(page_text: str, skip_lines: Optional[set] = None) -> List[str]:
-    """按行切段：句子结束符（。？！…）视为段落结尾；忽略页码/页眉/页脚。
+def _page_line_runs(page, base=None) -> List[Tuple[str, List[Run]]]:
+    """读出一页里每一行的 [(原始文本, 行内片段)]。
+
+    按行返回而不是整页返回：切段的噪声过滤、句末判定都发生在行上，
+    只有先把行组装好，才能在**不改变段落切分规则**的前提下把样式带下去。
+    一个 line 里的多个 span 在这里就合并成片段（相邻同样式会再合并一次）。
+    """
+    lines: List[Tuple[str, List[Run]]] = []
+    try:
+        data = page.get_text("dict")
+    except Exception:  # noqa: BLE001 —— 单个页面读不出来不该让整本书失败
+        return lines
+    for block in data.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        block_lines = block.get("lines", [])
+        # 基线按**块**统一算：块是 PDF 里一段文字的容器，行只是它的换行。
+        # 若按行算，遇到「下标独占一行」就会失去参照，把下标误判成小字号。
+        block_baseline = _block_baseline(block_lines)
+        for line in block_lines:
+            raw = "".join(span.get("text", "") for span in line.get("spans", []))
+            if not raw.strip():
+                continue
+            lines.append((raw, _line_runs(line, base, block_baseline)))
+    return lines
+
+
+def _span_style(span, base) -> Tuple[str, ...]:
+    """PDF span 的字形信息 → 语义样式 token。
+
+    只处理「与位置无关」的样式（粗体/斜体/flags 上的上标标记）。字号档位与
+    基线推出的上下标需要合起来判断（上下标本来就比正文小，不该再叠 sm），
+    所以那部分在 `_line_runs` 里统一收尾。
+    """
+    style: List[str] = []
+    flags = span.get("flags", 0) or 0
+    name = (span.get("font") or "").lower()
+    # PyMuPDF flags: bit0=上标 bit1=斜体 bit2=衬线 bit3=等宽 bit4=粗体
+    if flags & 16 or "bold" in name or name.endswith(("-black", "-heavy", "black")):
+        style.append("b")
+    if flags & 2 or "italic" in name or "oblique" in name:
+        style.append("i")
+    if flags & 1:
+        style.append("sup")
+    return tuple(style)
+
+
+def _size_token(size: float, base) -> Optional[str]:
+    """相对正文基准字号的档位 token。"""
+    if not (base and base.body_size and size):
+        return None
+    if size >= base.body_size * BODY_BIG_RATIO:
+        return "lg"
+    if size <= base.body_size * BODY_SMALL_RATIO:
+        return "sm"
+    return None
+
+
+def _line_runs(line, base, baseline: Optional[float] = None) -> List[Run]:
+    """把一个 PDF line 的 span 变成片段。
+
+    上下标按基线位置判定：带上下标的 span 与所在**块**的正文基线（最大字号的
+    那个 span）不一致，这是纯文本提取里唯一可靠的上下标信号。没传基线时退化成
+    按本行自己算。
+    """
+    spans = line.get("spans", [])
+    if not spans:
+        return []
+    if baseline is None:
+        baseline = _block_baseline([line])
+    runs: List[Optional[Run]] = []
+    for span in spans:
+        style = list(_span_style(span, base))
+        text = span.get("text", "")
+        origin_y = (span.get("origin") or (0, 0))[1]
+        size = span.get("size", 0) or 0
+        if baseline is not None and size:
+            delta = baseline - origin_y
+            if delta > size * VERTICAL_RATIO:
+                style.append("sup")
+            elif delta < -size * VERTICAL_RATIO:
+                style.append("sub")
+        # 上下标不再叠加字号档位：它们本来就比正文小，渲染侧 sup/sub 自带缩放
+        if "sup" not in style and "sub" not in style:
+            token = _size_token(size, base)
+            if token:
+                style.append(token)
+        runs.append(make_run(text, *style))
+    return runs
+
+
+def _block_baseline(lines) -> Optional[float]:
+    """一个块（PDF 里的一段文字容器）的正文基线 = **字号最大** span 的原点 y。
+
+    不能用「出现最多的 y」：上标与正文基线各出现一次时会打成平手，取谁全凭字典序，
+    偏移量就算错了（表现为正文被当成上标、或上标完全测不出来）。上下标一定比正文小，
+    所以「最大字号的基线」才是稳定判据。
+
+    按块而不是按行算：行只是块的换行，下标完全可能独占一行，那时按行算就失去了参照。
+    """
+    best = None
+    best_size = -1.0
+    for line in lines:
+        for span in line.get("spans", []):
+            origin = span.get("origin")
+            size = span.get("size", 0) or 0
+            if not origin or not size:
+                continue
+            if size > best_size:
+                best_size = size
+                best = origin[1]
+    return best
+
+
+def _merge_line_runs(chunks: List[List[Run]]) -> Tuple[List[Run], str]:
+    """把一段里各行拼成最终的片段与纯文本。
+
+    拼接沿用原来的 `"".join` 语义（行在读取时已 strip）。中文教材里换行不等于
+    空格，改成 `" ".join` 反而会在中文句子中间插入空格。
+
+    **纯文本以 `_clean_paragraph` 的结果为准**（它会 strip 并剥掉尾部页脚 URL），
+    片段再按这个结果对齐。反过来「从片段重新拼文本」会把刚剥掉的 URL 又带回来。
+    """
+    merged = merge_runs(run for chunk in chunks for run in chunk)
+    text = _clean_paragraph("".join(run.text for run in merged))
+    if not text:
+        return [], ""
+    aligned = _align_runs(merged, text)
+    return aligned, text
+
+
+def _align_runs(runs: List[Run], text: str) -> List[Run]:
+    """让片段拼出来的文本与 `text` 完全一致（保住渲染与锚点定位的不变量）。
+
+    两步：先按首尾空白修剪，再按字符数从**尾部**截断。尾部截断正是为了去掉
+    粘在段末的页脚 URL——只用 strip 是去不掉的，那样渲染出来会比 `text` 多一截。
+    """
+    if not runs:
+        return []
+    trimmed: List[Run] = []
+    last = len(runs) - 1
+    for index, run in enumerate(runs):
+        piece = run.text
+        if index == 0:
+            piece = piece.lstrip()
+        if index == last:
+            piece = piece.rstrip()
+        if piece:
+            trimmed.append(Run(text=piece, style=run.style))
+    trimmed = merge_runs(trimmed)
+
+    total = sum(len(run.text) for run in trimmed)
+    excess = total - len(text)
+    if excess <= 0:
+        return trimmed
+    kept: List[Run] = []
+    for run in trimmed:
+        if excess <= 0:
+            kept.append(run)
+            continue
+        drop = min(excess, len(run.text))
+        excess -= drop
+        piece = run.text[: len(run.text) - drop]
+        if piece:
+            kept.append(Run(text=piece, style=run.style))
+    return kept
+
+
+def _split_styled_paragraphs(
+    page, skip_lines: Optional[set] = None, base=None
+) -> List[Tuple[List[Run], str]]:
+    """按行切段，返回 [(片段, 纯文本)]。
+
+    切段规则与旧的 `_split_paragraphs` 完全一致（句子结束符断段、噪声行进段前剔除），
+    只是把「累积字符串」换成「累积片段」，样式因此能跟着走到段落里。
 
     噪声行（页眉/页脚/页码/目录行）先整体剔除再累积切段，而不是「遇到就断开」——
     这样被页眉打断的句子能重新接上，否则一行页眉会把一句话切成两段碎片。
     """
-    paras: List[str] = []
-    cur: List[str] = []
+    paras: List[Tuple[List[Run], str]] = []
+    cur: List[List[Run]] = []
 
     def flush() -> None:
         if not cur:
             return
-        text = _clean_paragraph("".join(cur))
+        runs, text = _merge_line_runs(cur)
         if text:
-            paras.append(text)
+            paras.append((runs, text))
         cur.clear()
 
-    for raw in page_text.splitlines():
+    for raw, runs in _page_line_runs(page, base):
         line = raw.strip()
         if not line:
             flush()
@@ -141,7 +368,7 @@ def _split_paragraphs(page_text: str, skip_lines: Optional[set] = None) -> List[
         # 单独成行的 URL（页脚）
         if URL_ONLY_RE.fullmatch(line):
             continue
-        cur.append(line)
+        cur.append(runs)
         if line[-1] in END_PUNCT and len(line) > 6:
             flush()
     flush()
@@ -202,6 +429,7 @@ def parse_pdf_stream(
                     for span in line.get("spans", []):
                         sizes.append(span.get("size", 0))
         body_size = sorted(sizes)[len(sizes) // 2] if sizes else 11.0
+        base = _Base(body_size=body_size)
 
         # 1) 目录书签 → 章节；2) 标题启发式
         toc = doc.get_toc()
@@ -266,15 +494,28 @@ def parse_pdf_stream(
             page_nos = list(range(ch.page_start - 1, ch.page_end))
             pages = [page_texts[p] if p < len(page_texts) else "" for p in page_nos]
             margin_lines = _repeated_margin_lines(pages)
-            for pno, text in zip(page_nos, pages):
-                for para in _split_paragraphs(text, skip_lines=margin_lines):
-                    kind = "formula" if looks_like_formula(para) else "p"
+            for pno in page_nos:
+                if pno >= n_pages:
+                    continue
+                for runs, text in _split_styled_paragraphs(doc[pno], skip_lines=margin_lines, base=base):
+                    kind = "formula" if looks_like_formula(text) else "p"
                     seq += 1
-                    ch.sections.append(ParsedSection(seq=seq, page=pno + 1, text=para, kind=kind))
-            # 首段若以章节标题开头（提取时与正文合并），剥离标题
+                    ch.sections.append(
+                        ParsedSection(
+                            seq=seq,
+                            page=pno + 1,
+                            text=text,
+                            kind=kind,
+                            content=runs_payload(runs),
+                        )
+                    )
+            # 首段若以章节标题开头（提取时与正文合并），剥离标题。
+            # 片段也要跟着剪掉同样的前缀，否则 text 与片段拼出来的文本会不一致。
             first = ch.sections[0] if ch.sections else None
             if first and first.text.replace(" ", "").startswith(ch.title.replace(" ", "")):
-                first.text = _strip_title_prefix(first.text, ch.title) or first.text
+                stripped = _strip_title_prefix(first.text, ch.title) or first.text
+                first.content = _strip_prefix_from_content(first.content, stripped)
+                first.text = stripped
 
         chapters = [c for c in chapters if c.sections]
         return ParsedBook(title=title, chapters=chapters, notes=notes)

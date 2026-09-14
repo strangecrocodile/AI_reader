@@ -1,12 +1,74 @@
 """PDF 解析单元测试（使用原创示例教材）。"""
+from typing import Any, Dict, List, Optional
+
 import pytest
 
+from app.parsing.base import runs_payload
 from app.parsing.pdf import (
     _pick_chapter_level,
     _repeated_margin_lines,
-    _split_paragraphs,
+    _split_styled_paragraphs,
     parse_pdf_stream,
 )
+
+
+def _line(text: str, *, bold: bool = False, size: float = 11.0, dy: float = 0.0) -> Dict[str, Any]:
+    """造一个 PDF line：`dy` 是该 span 相对基线的偏移（正数=更靠上）。
+
+    非粗体用 "Regular" 而不是 "Helvetica-Bold"，避免样式断言依赖字体名的细节。
+    """
+    flags = 16 if bold else 0
+    base_y = 100.0
+    return {
+        "spans": [
+            {
+                "text": text,
+                "font": "Demo-Bold" if bold else "Demo-Regular",
+                "size": size,
+                "flags": flags,
+                "color": 0,
+                "origin": (50.0, base_y - dy),
+            }
+        ]
+    }
+
+
+def _fake_page(blocks: List[List[Dict[str, Any]]]):
+    """最小 page 替身：只需要 `get_text("dict")`。
+
+    参数是「块列表」，每块是若干行。基线按块统一计算，所以同一段里的行必须放进
+    同一个块——这与 PyMuPDF 的真实结构一致，也让上下标检测有可比对的参照。
+    """
+
+    class _Page:
+        def get_text(self, kind: str = "text"):
+            return {"blocks": [{"type": 0, "lines": lines} for lines in blocks]}
+
+    return _Page()
+
+
+def _paras(text_or_lines, skip_lines: Optional[set] = None, base=None, blocks=None):
+    """按行切段，返回 [(纯文本, 片段 JSON)]。
+
+    传字符串时每行造一个无样式 span——绝大多数用例只关心文本切分，
+    只有样式相关的用例才需要自己拼 line。默认全部行放进**同一个块**。
+    """
+    if blocks is None:
+        if isinstance(text_or_lines, str):
+            blocks = [[_line(raw) for raw in text_or_lines.splitlines() if raw.strip()]]
+        else:
+            blocks = [text_or_lines]
+    result = []
+    for runs, text in _split_styled_paragraphs(
+        _fake_page(blocks), skip_lines=skip_lines, base=base
+    ):
+        payload = runs_payload(runs) or {"runs": []}
+        result.append((text, payload["runs"]))
+    return result
+
+
+def _texts(text_or_lines, skip_lines: Optional[set] = None) -> List[str]:
+    return [text for text, _ in _paras(text_or_lines, skip_lines=skip_lines)]
 
 
 def test_parse_structure(demo_pdf_bytes):
@@ -132,13 +194,13 @@ def test_split_paragraphs_drops_margin_and_toc_lines():
         "页眉\n"
         "https://example.com/\n"
     )
-    paras = _split_paragraphs(text, skip_lines={"页眉", "https://example.com/"})
+    paras = _texts(text, skip_lines={"页眉", "https://example.com/"})
     assert paras == ["正文第一句应当保留。"]
 
 
 def test_split_paragraphs_strips_trailing_footer_url():
     """页脚 URL 粘在正文尾部时应被剥离。"""
-    assert _split_paragraphs("原文到此处结束https://nndl.github.io/") == ["原文到此处结束"]
+    assert _texts("原文到此处结束https://nndl.github.io/") == ["原文到此处结束"]
 
 
 def test_split_paragraphs_handles_fullwidth_full_stop():
@@ -146,11 +208,97 @@ def test_split_paragraphs_handles_fullwidth_full_stop():
 
     只认「。」会让整页文字黏成一段（实测某教材中位段长一度涨到 588 字）。
     """
-    paras = _split_paragraphs("第一句话到这里结束了．\n第二句话开始了．")
+    paras = _texts("第一句话到这里结束了．\n第二句话开始了．")
     assert len(paras) == 2
 
 
 def test_split_paragraphs_rejoins_sentence_broken_by_header():
     """被页眉打断的句子应重新接上，而不是切成两段碎片。"""
-    paras = _split_paragraphs("前半句还没有结束\n页眉\n后半句继续。", skip_lines={"页眉"})
+    paras = _texts("前半句还没有结束\n页眉\n后半句继续。", skip_lines={"页眉"})
     assert paras == ["前半句还没有结束后半句继续。"]
+
+
+# ---------- 行内版式（content.runs） ----------
+
+
+def test_styled_paragraph_keeps_text_and_styles_in_sync():
+    """片段拼起来必须等于纯文本——这是渲染与锚点定位的共同前提。"""
+    lines = [
+        _line("比值 "),
+        _line("Δy / Δx", dy=3.0, size=7.0),   # 字号更小且基线偏上 → 上标
+        _line(" 的极限存在，称为"),
+        _line("导数", bold=True),
+        _line("。"),
+    ]
+    paras = _paras(lines)
+    text, runs = paras[0]
+
+    assert text == "比值 Δy / Δx 的极限存在，称为导数。"
+    assert "".join(r["text"] for r in runs) == text
+    assert any("sup" in r["style"] for r in runs)
+    assert any("b" in r["style"] for r in runs)
+
+
+def test_bold_detected_from_flags_and_from_font_name():
+    """粗体判定要同时认 flags 与字体名——不同生成器给的信息不一样。"""
+    by_flags = _paras([_line("导数", bold=True)])[0][1]
+    assert any("b" in r["style"] for r in by_flags)
+
+    # 只给字体名、不给 flags 的情况（字体名带 Bold 就够）
+    named = _line("导数")
+    named["spans"][0]["font"] = "SourceHanSerifCN-Bold"
+    assert any("b" in r["style"] for r in _paras([named])[0][1])
+
+
+def test_subscript_baseline_detected():
+    """基线偏下 → 下标（PDF 没有直接的上下标标记，只能看基线）。
+
+    下标与正文放在**同一行**：独占一行的裸数字会被页码行过滤规则当成页脚丢掉，
+    那是为页码设计的既有行为，不该被这个用例当成缺陷。
+    """
+    line = {
+        "spans": [
+            {"text": "x", "font": "Demo-Regular", "size": 11.0, "flags": 0, "origin": (50.0, 100.0)},
+            {"text": "0", "font": "Demo-Regular", "size": 7.0, "flags": 0, "origin": (57.0, 103.0)},
+            {"text": " 处的导数。", "font": "Demo-Regular", "size": 11.0, "flags": 0, "origin": (60.0, 100.0)},
+        ]
+    }
+    runs = _paras([line])[0][1]
+
+    assert [r["style"] for r in runs if r["text"] == "0"] == [["sub"]]
+
+
+def test_large_and_small_sizes_map_to_style_tokens():
+    """相对正文基准字号的大小档位。"""
+    from app.parsing.pdf import _Base
+
+    base = _Base(body_size=10.0)
+    lines = [_line("标题", size=13.0), _line("注释", size=7.0), _line("正文", size=10.0)]
+    runs = _paras(lines, base=base)[0][1]
+    styles = {r["text"]: r["style"] for r in runs}
+
+    assert "lg" in styles["标题"]
+    assert "sm" in styles["注释"]
+    assert styles["正文"] == []
+
+
+def test_adjacent_same_style_runs_are_merged():
+    """相邻同样式必须合并，否则一个普通段落会碎成几十个 span。"""
+    lines = [_line("导", bold=True), _line("数", bold=True), _line("定义", bold=True)]
+    runs = _paras(lines)[0][1]
+
+    assert runs == [{"text": "导数定义", "style": ["b"]}]
+
+
+def test_parse_pdf_content_matches_text(demo_pdf_bytes):
+    """端到端：每个段落的片段拼起来都要等于它的纯文本。"""
+    book = parse_pdf_stream(demo_pdf_bytes, "demo")
+    checked = 0
+    for chapter in book.chapters:
+        for section in chapter.sections:
+            runs = (section.content or {}).get("runs")
+            if not runs:
+                continue
+            assert "".join(r["text"] for r in runs) == section.text
+            checked += 1
+    assert checked, "示例 PDF 应当至少解析出一个带版式信息的段落"

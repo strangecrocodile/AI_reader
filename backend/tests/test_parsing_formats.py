@@ -235,7 +235,9 @@ def test_chapter_level_prefers_deeper_level_when_shallow_is_book_title():
     assert chapter_level_of(rows) == 2
     blocks = build_blocks(rows)
     assert [b.title for b in blocks] == ["第1章 函数", "第2章 导数"]
-    assert ("1.1 函数", "heading") in blocks[0].paragraphs
+    # Block.paragraphs 是 (文本, kind, 富文本内容) 三元组；纯文本来源的 content 为
+    # None，渲染层据此把文本当成单个无样式片段（见 base.runs_of_content）
+    assert ("1.1 函数", "heading", None) in blocks[0].paragraphs
 
 
 def test_chapter_level_falls_back_to_text_mode_for_title_only_headings():
