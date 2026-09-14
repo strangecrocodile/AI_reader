@@ -12,6 +12,7 @@ from app.parsing.base import CHARS_PER_PAGE, Block, assemble_book, build_blocks,
 from app.parsing.docx import parse_docx_bytes
 from app.parsing.text import decode_bytes, parse_text_bytes, read_rows
 from app.services.ingest import (
+    DOC,
     DOCX,
     LOW_CONTENT_CHARS,
     PDF,
@@ -261,7 +262,8 @@ def test_detect_format_by_extension_and_content_type():
     ) == DOCX
     # 不支持的格式
     assert detect_format("scan.png", "image/png") is None
-    assert detect_format("old.doc", "application/msword") is None
+    # .doc 旧格式走 LibreOffice 转换（见 services/legacy_doc），识别阶段要认出来
+    assert detect_format("old.doc", "application/msword") == DOC
 
 
 def test_parse_bytes_rejects_unknown_format():

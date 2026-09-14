@@ -69,6 +69,21 @@ export const api = {
   },
 
   /**
+   * 后端当前能收哪些格式（`.`doc` 依赖可选的 LibreOffice）。
+   *
+   * 拿不到时返回 null：前端用内置的默认提示，不至于因为一个探测请求失败就
+   * 让上传功能整个不可用。
+   */
+  async fetchCapabilities() {
+    if (!useBackend()) return null;
+    try {
+      return await request('/api/capabilities');
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * 原文件的下载地址；这本教材没有留存原文件时返回空串。
    *
    * 只给 URL 而不代下载：让浏览器用自己的下载能力（进度、断点、另存为），

@@ -21,8 +21,7 @@ describe('api 后端模式（REST）', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://backend.test/api/books', expect.anything());
   });
 
-  it('uploadBook 以 multipart 提交 PDF', async () => {
-    configureApiBase('http://backend.test');
+  it('uploadBook 以 multipart 提交 PDF', async () => {    configureApiBase('http://backend.test');
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({ id: 'b2', title: '新教材', chapters: [] }),
@@ -44,6 +43,45 @@ describe('api 后端模式（REST）', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));
 
     expect(await api.fetchStudyContent('b1', 'ch9')).toBeNull();
+  });
+
+  it('fetchCapabilities 请求能力接口（.doc 是否可用）', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ formats: ['pdf', 'doc'], legacyDoc: true, legacyDocHint: '' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.fetchCapabilities()).resolves.toMatchObject({ legacyDoc: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://backend.test/api/capabilities',
+      expect.anything(),
+    );
+  });
+
+  it('fetchCapabilities 失败时返回 null，不拖垮上传入口', async () => {
+    configureApiBase('http://backend.test');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
+
+    expect(await api.fetchCapabilities()).toBeNull();
+  });
+
+  it('sourceUrl 只在留存了原文件时给出下载地址', () => {
+    configureApiBase('http://backend.test');
+
+    expect(api.sourceUrl({ id: 'b1', hasSource: true })).toBe(
+      'http://backend.test/api/books/b1/source',
+    );
+    expect(api.sourceUrl({ id: 'b1', hasSource: false })).toBe('');
+    expect(api.sourceUrl({ id: 'b1' })).toBe('');
+    expect(api.sourceUrl(null)).toBe('');
+  });
+
+  it('演示模式没有真实原文件，sourceUrl 返回空串', () => {
+    configureApiBase('');
+
+    expect(api.sourceUrl({ id: 'b1', hasSource: true })).toBe('');
   });
 
   it('fetchKnowledge 请求知识地图接口', async () => {

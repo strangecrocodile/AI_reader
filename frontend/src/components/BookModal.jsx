@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useBooks } from '../state/BookContext.jsx';
 import { useToast } from '../state/ToastContext.jsx';
 import { api } from '../services/api.js';
@@ -6,6 +6,9 @@ import { api } from '../services/api.js';
 /** 与后端 services/ingest.py 的 SUPPORTED_MESSAGE 保持一致，前端只做前置提示。 */
 const SUPPORTED_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md'];
 const FORMAT_HINT = '目前支持 PDF / Word(.docx) / 纯文本(.txt/.md) 教材；.doc 请先另存为 .docx';
+/** 后端装了 LibreOffice 时才知道能直接吃 .doc（见 /api/capabilities）。 */
+const DOC_EXTENSION = '.doc';
+const ACCEPT_BASE = '.pdf,.docx,.txt,.md,application/pdf,text/plain,text/markdown';
 /** 解析受限时给的补救建议：症状在界面上，原因多半在文档本身。 */
 const WARNING_TIP =
   '常见原因：正文写在表格里、文本框里，或整本是扫描图片。把内容改为普通段落（Word 用「标题 1/2」做章节），或另存为 .md / .txt 后重新上传，识别效果最好。';
@@ -17,8 +20,27 @@ export default function BookModal({ open, onClose }) {
   const inputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [warning, setWarning] = useState(null);
+  // null 表示「还不知道」：按默认（不支持 .doc）处理，探测回来再放开
+  const [legacyDoc, setLegacyDoc] = useState(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    api.fetchCapabilities().then((data) => {
+      if (!cancelled && data) setLegacyDoc(Boolean(data.legacyDoc));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   if (!open) return null;
+
+  const extensions = legacyDoc ? [...SUPPORTED_EXTENSIONS, DOC_EXTENSION] : SUPPORTED_EXTENSIONS;
+  const formatHint = legacyDoc
+    ? '目前支持 PDF / Word(.docx / .doc) / 纯文本(.txt/.md) 教材'
+    : FORMAT_HINT;
+  const accept = legacyDoc ? `${ACCEPT_BASE},.doc,application/msword` : ACCEPT_BASE;
 
   /** 关闭时清掉上一次的解析提示，免得再打开时挂着一条过期的警告。 */
   const close = () => {
@@ -40,8 +62,8 @@ export default function BookModal({ open, onClose }) {
     event.target.value = '';
     if (!file) return;
     const name = file.name.toLowerCase();
-    if (!SUPPORTED_EXTENSIONS.some((ext) => name.endsWith(ext))) {
-      toast(FORMAT_HINT);
+    if (!extensions.some((ext) => name.endsWith(ext))) {
+      toast(formatHint);
       return;
     }
     setUploading(true);
@@ -104,14 +126,14 @@ export default function BookModal({ open, onClose }) {
             ref={inputRef}
             className="upload-input"
             type="file"
-            accept=".pdf,.docx,.txt,.md,application/pdf,text/plain,text/markdown"
+            accept={accept}
             onChange={upload}
             aria-label="选择教材文件"
           />
           <button className="upload" type="button" onClick={() => inputRef.current?.click()} disabled={uploading}>
             {uploading ? '正在上传并识别目录…' : '＋ 上传新教材（PDF / Word / 文本）'}
           </button>
-          <p className="upload-hint">{FORMAT_HINT}</p>
+          <p className="upload-hint">{formatHint}</p>
         </div>
       </div>
     </div>

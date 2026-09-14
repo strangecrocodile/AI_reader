@@ -189,6 +189,70 @@ describe('主页', () => {
     expect(uploadBook).not.toHaveBeenCalled();
     uploadBook.mockRestore();
   });
+
+  it('后端装了 LibreOffice 时，.doc 可直接上传且提示与 accept 同步放宽', async () => {
+    const uploaded = {
+      ...mockBooks[0],
+      id: 'uploaded-doc',
+      title: '旧格式教材',
+      cover: { ...mockBooks[0].cover, lines: ['旧格式教材'] },
+    };
+    const fetchBooks = vi
+      .spyOn(api, 'fetchBooks')
+      .mockResolvedValueOnce(mockBooks)
+      .mockResolvedValueOnce([...mockBooks, uploaded]);
+    const uploadBook = vi.spyOn(api, 'uploadBook').mockResolvedValue(uploaded);
+    // 能力探测由后端决定：装了 LibreOffice 才认 .doc
+    const capabilities = vi
+      .spyOn(api, 'fetchCapabilities')
+      .mockResolvedValue({ formats: ['pdf', 'docx', 'doc'], legacyDoc: true, legacyDocHint: '' });
+
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText('正在学习的教材');
+    await user.click(screen.getByRole('button', { name: /更换教材/ }));
+
+    // 提示与文件选择器都要跟着放开，否则用户仍然传不进来
+    expect(await screen.findByText(/Word\(\.docx \/ \.doc\)/, { selector: '.upload-hint' })).toBeInTheDocument();
+    expect(screen.getByLabelText('选择教材文件')).toHaveAttribute(
+      'accept',
+      expect.stringContaining('.doc'),
+    );
+
+    const file = new File(['doc'], 'old.doc', { type: 'application/msword' });
+    fireEvent.change(screen.getByLabelText('选择教材文件'), { target: { files: [file] } });
+
+    await waitFor(() => expect(uploadBook).toHaveBeenCalledWith(file));
+    expect(await screen.findByTestId('book-cover')).toHaveTextContent('旧格式教材');
+
+    capabilities.mockRestore();
+    uploadBook.mockRestore();
+    fetchBooks.mockRestore();
+  });
+
+  it('后端没装 LibreOffice 时，.doc 仍被拦下并提示另存为 .docx', async () => {
+    const uploadBook = vi.spyOn(api, 'uploadBook');
+    const capabilities = vi
+      .spyOn(api, 'fetchCapabilities')
+      .mockResolvedValue({ formats: ['pdf', 'docx'], legacyDoc: false, legacyDocHint: '未安装' });
+
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText('正在学习的教材');
+    await user.click(screen.getByRole('button', { name: /更换教材/ }));
+    await screen.findByText(/目前支持 PDF \/ Word\(\.docx\)/, { selector: '.upload-hint' });
+
+    const file = new File(['doc'], 'old.doc', { type: 'application/msword' });
+    fireEvent.change(screen.getByLabelText('选择教材文件'), { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('.doc 请先另存为 .docx'),
+    );
+    expect(uploadBook).not.toHaveBeenCalled();
+
+    capabilities.mockRestore();
+    uploadBook.mockRestore();
+  });
 });
 
 describe('学习页', () => {

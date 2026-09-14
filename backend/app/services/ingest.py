@@ -1,8 +1,10 @@
 """教材入库：多格式文件 → 解析 → SQLite（教材/章节/段落/锚点）。
 
-支持 PDF、Word（.docx）与纯文本（.txt/.md）。三种格式解析后产出同一套
-章节-段落-锚点模型，因此检索、溯源问答、知识点图谱等下游逻辑完全共用，
+支持 PDF、Word（.docx / .doc）与纯文本（.txt/.md）。各格式解析后产出同一套
+章节-段落-锚点模型，因此检索、溯源问答、知识点图谱这些下游逻辑完全共用，
 不需要按来源格式分叉（页码差异见 `parsing/base.py` 的虚拟页码说明）。
+
+`.doc` 是特例：它要先经 LibreOffice 转成 .docx 才能读（见 services/legacy_doc）。
 """
 import uuid
 from pathlib import Path
@@ -12,19 +14,22 @@ from ..db import Database
 from ..parsing.docx import parse_docx_bytes
 from ..parsing.pdf import parse_pdf_stream
 from ..parsing.text import parse_text_bytes
+from . import legacy_doc
 
 PDF = "pdf"
 DOCX = "docx"
+DOC = "doc"
 TEXT = "text"
 
 #: 格式不支持时给用户看的提示（前端也会用同样的文案做前置校验）
-SUPPORTED_MESSAGE = "目前支持 PDF / Word(.docx) / 纯文本(.txt/.md) 教材；.doc 请先另存为 .docx"
+SUPPORTED_MESSAGE = "目前支持 PDF / Word(.docx / .doc) / 纯文本(.txt/.md) 教材"
 _TEXT_SUFFIXES = (".txt", ".md", ".markdown")
 
 #: 「下载原文件」的响应 MIME；未知格式退化成二进制流，浏览器会当附件下载。
 SOURCE_MEDIA_TYPES = {
     PDF: "application/pdf",
     DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    DOC: "application/msword",
     TEXT: "text/plain; charset=utf-8",
 }
 
@@ -42,6 +47,8 @@ def detect_format(filename: str = "", content_type: str = "") -> Optional[str]:
         return PDF
     if suffix == ".docx":
         return DOCX
+    if suffix == ".doc":
+        return DOC
     if suffix in _TEXT_SUFFIXES:
         return TEXT
 
@@ -50,6 +57,8 @@ def detect_format(filename: str = "", content_type: str = "") -> Optional[str]:
         return PDF
     if "wordprocessingml" in content:
         return DOCX
+    if content == "application/msword":
+        return DOC
     if content.startswith("text/"):
         return TEXT
     return None
@@ -67,9 +76,15 @@ def parse_bytes(
     `assets_dir` 给出时，解析器把抽出的插图落盘到该目录、表格抽成行列结构；
     为 None 则只解析文本，不产生任何文件——单元测试默认走这条路径。
     `book_id` 用于给落盘的资源命名，便于从库里反查。
+
+    `.doc` 先转成 .docx 再走 Word 解析——转换器拿不到就直接抛错（见 legacy_doc），
+    不做「抽成纯文本」的降级：那会静默丢掉全部行内版式，与本次目标相悖。
     """
     if fmt == PDF:
         return parse_pdf_stream(data, default_title, assets_dir, book_id)
+    if fmt == DOC:
+        data = legacy_doc.convert_doc_to_docx(data)
+        fmt = DOCX
     if fmt == DOCX:
         return parse_docx_bytes(data, default_title, assets_dir, book_id)
     if fmt == TEXT:

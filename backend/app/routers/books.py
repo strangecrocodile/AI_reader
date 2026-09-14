@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from ..models import AskRequest, EventRequest, ProgressRequest, ThreadRequest
 from ..serializers import book_meta, chapter_content
+from ..services import legacy_doc
 from ..services import threads as thread_service
 from ..services.ask import answer_question, stream_answer
 from ..services.ingest import (
@@ -34,6 +35,24 @@ def _state(request: Request):
 def health(request: Request):
     db, llm, _, _ = _state(request)
     return {"status": "ok", "llm": llm.kind, "books": len(db.list_books())}
+
+
+@router.get("/api/capabilities")
+def capabilities(request: Request):
+    """可上传的格式与当前环境能力。
+
+    `.doc` 依赖可选的 LibreOffice：没有它时上传会报明确的错，但前端最好**提前**
+    知道，好把「接受 .doc」的提示与文件选择器的 accept 收窄，别让用户白传一次。
+    """
+    formats = ["pdf", "docx", "txt", "md"]
+    if legacy_doc.is_available():
+        formats.append("doc")
+    return {
+        "formats": formats,
+        "legacyDoc": legacy_doc.is_available(),
+        "legacyDocHint": "" if legacy_doc.is_available() else legacy_doc.MISSING_MESSAGE,
+        "message": SUPPORTED_MESSAGE,
+    }
 
 
 @router.get("/api/books")
