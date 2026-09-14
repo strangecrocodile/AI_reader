@@ -229,23 +229,9 @@ export default function Reader({
             className="paper-body-inner"
             style={bodyShift ? { transform: `translateY(${bodyShift}px)` } : undefined}
           >
-            {paragraphs.map((para, i) =>
-              para.type === 'formula' ? (
-                <p key={i} className="formula-line" data-block-index={i}>
-                  {para.parts.map((part, j) =>
-                    typeof part === 'string' ? (
-                      <span key={j}>{part}</span>
-                    ) : (
-                      <sub key={j}>{part.sub}</sub>
-                    ),
-                  )}
-                </p>
-              ) : (
-                <p key={i} data-block-index={i}>
-                  <SegmentText segs={para.segs} focusId={focusId} />
-                </p>
-              ),
-            )}
+            {paragraphs.map((para, i) => (
+              <Paragraph key={i} para={para} index={i} focusId={focusId} />
+            ))}
           </div>
         </div>
       </div>
@@ -272,6 +258,62 @@ export default function Reader({
           : '用鼠标左键拖选原文，即可对选中内容提问'}
       </div>
     </article>
+  );
+}
+
+/**
+ * 正文里的一个块：段落 / 公式行 / 插图 / 表格。
+ *
+ * 每个块的根元素都必须带 `data-block-index`——分页装箱是按这些元素**实测的
+ * 位置**算的（见 utils/pagination.js），漏一个就会让后续页码整体错位。
+ * 类型未知时退回按段落渲染，老数据与将来新增的类型都不会白屏。
+ */
+function Paragraph({ para, index, focusId }) {
+  if (para.type === 'formula') {
+    return (
+      <p className="formula-line" data-block-index={index}>
+        {para.parts.map((part, j) =>
+          typeof part === 'string' ? <span key={j}>{part}</span> : <sub key={j}>{part.sub}</sub>,
+        )}
+      </p>
+    );
+  }
+
+  if (para.type === 'image') {
+    return (
+      <figure className="paper-figure" data-block-index={index} data-source-id={para.id}>
+        {para.src ? <img src={para.src} alt={para.caption || '教材插图'} loading="lazy" /> : null}
+        {para.caption ? <figcaption>{para.caption}</figcaption> : null}
+      </figure>
+    );
+  }
+
+  if (para.type === 'table') {
+    return (
+      <div className="paper-table" data-block-index={index} data-source-id={para.id}>
+        <table>
+          <tbody>
+            {(para.rows ?? []).map((row, r) => (
+              <tr key={r}>
+                {row.map((cell, c) =>
+                  para.header && r === 0 ? (
+                    <th key={c}>{cell}</th>
+                  ) : (
+                    <td key={c}>{cell}</td>
+                  ),
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  return (
+    <p data-block-index={index}>
+      <SegmentText segs={para.segs} focusId={focusId} />
+    </p>
   );
 }
 

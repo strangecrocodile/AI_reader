@@ -98,6 +98,29 @@
   align-self: flex-start;
 }
 
+/* 两个按钮并排：更换教材是主动作，下载原文件是次要动作 */
+.book-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.download-source {
+  border: 1px solid var(--line);
+  background: #fffef9;
+  color: var(--ink);
+  padding: 12px 15px;
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.download-source:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
 /* ---------- 学习计划面板 ---------- */
 .plan-panel {
   background: var(--card);

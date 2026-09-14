@@ -1,6 +1,14 @@
-/** 主页左侧：教材封面卡片 + 更换教材按钮。 */
+import { api } from '../services/api.js';
+
+/**
+ * 主页左侧：教材封面卡片 + 下载原文件 + 更换教材按钮。
+ *
+ * 「下载原文件」只在确实留存了原文件时才出现：老教材（该功能上线前导入的）
+ * 没有原文件，给一个必然 404 的链接比没有这个按钮更糟。
+ */
 export default function BookCard({ book, onSwap }) {
   const { cover, progressText } = book;
+  const sourceUrl = api.sourceUrl(book);
   return (
     <div className="book-stage">
       <div className="book-meta">
@@ -21,9 +29,16 @@ export default function BookCard({ book, onSwap }) {
         </div>
         <div className="tiny">{cover.footer}</div>
       </div>
-      <button className="switch-book" onClick={onSwap}>
-        更换教材　↗
-      </button>
+      <div className="book-actions">
+        <button className="switch-book" onClick={onSwap}>
+          更换教材　↗
+        </button>
+        {sourceUrl ? (
+          <a className="download-source" href={sourceUrl} download>
+            下载原文件　↓
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -78,6 +78,82 @@
   font-family: Georgia, serif;
 }
 
+/* ---------- 行内版式（来自原文件的粗体/斜体/上下标/字号层级） ---------- */
+/* token 与后端 parsing.base.STYLE_TOKENS 一一对应，由 SegmentText 映射成这些 class。
+   字号不做绝对复刻：PDF 的字号是打印单位，绝对值没有意义；这里只保留**相对层级**。 */
+.rt-b {
+  font-weight: 700;
+}
+
+.rt-i {
+  font-style: italic;
+}
+
+.rt-sup,
+.rt-sub {
+  font-size: 0.72em;
+  line-height: 0; /* 上标不撑高行盒，否则整段行距忽大忽小 */
+}
+
+.rt-sup {
+  vertical-align: super;
+}
+
+.rt-sub {
+  vertical-align: sub;
+}
+
+.rt-lg {
+  font-size: 1.18em;
+}
+
+.rt-sm {
+  font-size: 0.86em;
+}
+
+/* ---------- 插图与表格 ---------- */
+.paper-figure {
+  margin: 26px 0;
+  text-align: center;
+}
+
+.paper-figure img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.paper-figure figcaption {
+  margin-top: 8px;
+  color: #9b9b92;
+  font-size: 12px;
+}
+
+.paper-table {
+  margin: 22px 0;
+  overflow-x: auto;
+}
+
+.paper-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.paper-table th,
+.paper-table td {
+  border: 1px solid var(--line);
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.paper-table th {
+  background: #f4f1e7;
+  font-weight: 700;
+}
+
 .source {
   border-radius: 3px;
   transition: 0.25s;

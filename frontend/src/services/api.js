@@ -68,6 +68,18 @@ export const api = {
     return res.json();
   },
 
+  /**
+   * 原文件的下载地址；这本教材没有留存原文件时返回空串。
+   *
+   * 只给 URL 而不代下载：让浏览器用自己的下载能力（进度、断点、另存为），
+   * 也避免把整本书读进内存。
+   */
+  sourceUrl(book) {
+    if (!book?.hasSource) return '';
+    if (!useBackend()) return ''; // 演示模式没有真实原文件
+    return `${apiBase}/api/books/${book.id}/source`;
+  },
+
   /** 获取单本教材；不存在返回 null。 */
   async fetchBook(bookId) {
     if (useBackend()) {
