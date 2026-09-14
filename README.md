@@ -131,7 +131,7 @@ $env:PYTHONPATH = 'src'
 提交改动前，请确保相关套件全部通过。测试均不依赖模型 Key，也不访问外网。
 
 ```powershell
-# 后端：115 项
+# 后端：125 项
 cd backend
 .venv\Scripts\python.exe -m pytest
 
