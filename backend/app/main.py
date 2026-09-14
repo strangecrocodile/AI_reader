@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import Settings, settings as default_settings
 from .db import Database
@@ -56,6 +57,10 @@ def create_app(
     app.state.settings = settings
 
     app.include_router(books.router)
+    # 教材里抽出的插图：静态目录直接对外提供，前端 <img src="/assets/..."> 即可。
+    # 目录可能还不存在（没导入过带图的教材），先建出来，否则 mount 会报错。
+    settings.assets_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/assets", StaticFiles(directory=str(settings.assets_dir)), name="assets")
     return app
 
 

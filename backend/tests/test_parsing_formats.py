@@ -279,31 +279,37 @@ def test_clean_docx_reports_no_skipped_content():
     assert book.notes == []
 
 
-def test_docx_reports_skipped_table():
-    """表格里的文字 `doc.paragraphs` 读不到，必须如实报告数量。"""
+def test_docx_table_is_extracted_not_reported_as_skipped():
+    """表格现在会被抽成 kind='table' 的段落，不再算「读不到」。"""
     document = Document()
     document.add_heading("第1章 测试", level=1)
     document.add_paragraph("正文段落。")
-    document.add_table(rows=2, cols=2)
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "列一"
+    table.cell(0, 1).text = "列二"
+    table.cell(1, 0).text = "甲"
+    table.cell(1, 1).text = "乙"
 
     book = parse_docx_bytes(_save(document))
 
-    assert book.notes == ["1 个表格"]
-    # 报告的数字要和实际丢失的内容对得上：表格文字确实一个字都没进正文
-    assert all("表格" not in chapter.full_text for chapter in book.chapters)
+    assert book.notes == [], "表格已能读出，不该再报「跳过了表格」"
+    tables = [s for c in book.chapters for s in c.sections if s.kind == "table"]
+    assert len(tables) == 1
+    assert tables[0].content["header"] is True
+    assert tables[0].content["rows"][0][0]["text"] == "列一"
+    # 表格文字同时进纯文本，供检索与锚点用
+    assert "列一" in tables[0].text
 
 
-def test_content_warning_flags_book_whose_text_hides_in_tables():
-    """用户实际遇到的那个情况：正文都在表格里，整本只解析出几十个字。"""
+def test_content_warning_fires_when_body_is_too_thin():
+    """症状仍要报：正文过少时提醒用户「内容可能没读全」。"""
     document = Document()
     document.add_heading("第1章 测试", level=1)
     document.add_paragraph("短短一句话。")
-    document.add_table(rows=3, cols=2)
 
     warning = content_warning_of(parse_docx_bytes(_save(document)))
 
-    assert "6 个字" in warning  # 症状：用户能直接感知的
-    assert "1 个表格" in warning  # 根因：解析器跳过了什么
+    assert "6 个字" in warning
 
 
 def test_content_warning_does_not_fire_on_thin_but_valid_textbook():

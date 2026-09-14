@@ -52,6 +52,7 @@ def _paras(text_or_lines, skip_lines: Optional[set] = None, base=None, blocks=No
 
     传字符串时每行造一个无样式 span——绝大多数用例只关心文本切分，
     只有样式相关的用例才需要自己拼 line。默认全部行放进**同一个块**。
+    底层返回的 y 只在插图/表格排版时需要，这里丢掉。
     """
     if blocks is None:
         if isinstance(text_or_lines, str):
@@ -59,7 +60,7 @@ def _paras(text_or_lines, skip_lines: Optional[set] = None, base=None, blocks=No
         else:
             blocks = [text_or_lines]
     result = []
-    for runs, text in _split_styled_paragraphs(
+    for _y, runs, text in _split_styled_paragraphs(
         _fake_page(blocks), skip_lines=skip_lines, base=base
     ):
         payload = runs_payload(runs) or {"runs": []}
@@ -210,6 +211,14 @@ def test_split_paragraphs_handles_fullwidth_full_stop():
     """
     paras = _texts("第一句话到这里结束了．\n第二句话开始了．")
     assert len(paras) == 2
+
+
+def test_ascii_period_ends_a_sentence_but_not_a_decimal():
+    """半角句点要能断段（英文教材），但不能切开数字里的点。"""
+    assert len(_texts("First sentence.\nSecond sentence.")) == 2
+    # 3.14 与行尾的「3.」都不该被当成句末
+    assert len(_texts("圆周率约等于3.14\n它是个无理数。")) == 1
+    assert len(_texts("极限值记作3.\n下一句在这里。")) == 1
 
 
 def test_split_paragraphs_rejoins_sentence_broken_by_header():

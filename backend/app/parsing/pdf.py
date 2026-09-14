@@ -13,8 +13,10 @@
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .assets import TABLE_SCAN_MAX_PAGES, extract_page_assets
 from .base import (
     ParsedBook,
     ParsedChapter,
@@ -124,6 +126,9 @@ def _strip_prefix_from_content(
 # 句末标点。注意包含「．」(U+FF0E 全角句点)：不少中文教材（尤其理工类）用它作句号，
 # 只认「。」(U+3002) 会导致整页文字黏成一段。
 END_PUNCT = "。．？！；：!?;”』」…"
+# 半角句点单独判定：它是句末标点，但也是小数点，不能无条件断句。
+# 「π 约等于 3.」这种行尾小数与「3.14」这类数字中间的句点都不该断开。
+ASCII_STOP_RE = re.compile(r"(?<!\d)\.\s*$")
 FOOTER_RE = re.compile(r"[\d\s\-—.·]+$")
 # 单独成行的 URL（页脚）
 URL_ONLY_RE = re.compile(r"(?:https?://|www\.)\S+")
@@ -161,14 +166,30 @@ def _clean_paragraph(text: str) -> str:
     return TRAILING_URL_RE.sub("", text).strip()
 
 
-def _page_line_runs(page, base=None) -> List[Tuple[str, List[Run]]]:
-    """读出一页里每一行的 [(原始文本, 行内片段)]。
+def _ends_sentence(line: str) -> bool:
+    """这一行是否该断段。
+
+    中文句末标点直接算；半角句点要看前一个字符不是数字，避免把 `3.14` 或
+    `π 约等于 3.` 这类数字里的点当成句号。英文教材因此也能正确断段，
+    而原来（只认中文标点）会把整页英文黏成一段。
+    """
+    if not line:
+        return False
+    if line[-1] in END_PUNCT:
+        return True
+    return bool(ASCII_STOP_RE.search(line))
+
+
+def _page_line_runs(page, base=None) -> List[Tuple[str, List[Run], float]]:
+    """读出一页里每一行的 [(原始文本, 行内片段, 顶部 y)]。
 
     按行返回而不是整页返回：切段的噪声过滤、句末判定都发生在行上，
     只有先把行组装好，才能在**不改变段落切分规则**的前提下把样式带下去。
     一个 line 里的多个 span 在这里就合并成片段（相邻同样式会再合并一次）。
+
+    带上 y 是为了让插图/表格能按纵向位置插回正文顺序。
     """
-    lines: List[Tuple[str, List[Run]]] = []
+    lines: List[Tuple[str, List[Run], float]] = []
     try:
         data = page.get_text("dict")
     except Exception:  # noqa: BLE001 —— 单个页面读不出来不该让整本书失败
@@ -184,7 +205,7 @@ def _page_line_runs(page, base=None) -> List[Tuple[str, List[Run]]]:
             raw = "".join(span.get("text", "") for span in line.get("spans", []))
             if not raw.strip():
                 continue
-            lines.append((raw, _line_runs(line, base, block_baseline)))
+            lines.append((raw, _line_runs(line, base, block_baseline), _line_y(line)))
     return lines
 
 
@@ -331,27 +352,35 @@ def _align_runs(runs: List[Run], text: str) -> List[Run]:
 
 def _split_styled_paragraphs(
     page, skip_lines: Optional[set] = None, base=None
-) -> List[Tuple[List[Run], str]]:
-    """按行切段，返回 [(片段, 纯文本)]。
+) -> List[Tuple[float, List[Run], str]]:
+    """按行切段，返回 [(段落顶部 y, 片段, 纯文本)]。
 
     切段规则与旧的 `_split_paragraphs` 完全一致（句子结束符断段、噪声行进段前剔除），
     只是把「累积字符串」换成「累积片段」，样式因此能跟着走到段落里。
 
+    额外带上段落的顶部 y：插图与表格要按纵向位置插回正文顺序，没有这个坐标
+    就只能把它们全部堆到章末，读起来完全错位。
+
     噪声行（页眉/页脚/页码/目录行）先整体剔除再累积切段，而不是「遇到就断开」——
     这样被页眉打断的句子能重新接上，否则一行页眉会把一句话切成两段碎片。
     """
-    paras: List[Tuple[List[Run], str]] = []
+    paras: List[Tuple[float, List[Run], str]] = []
     cur: List[List[Run]] = []
+    cur_y: Optional[float] = None
+    pending_y: Optional[float] = None
 
     def flush() -> None:
+        nonlocal cur_y, pending_y
         if not cur:
+            cur_y = pending_y = None
             return
         runs, text = _merge_line_runs(cur)
         if text:
-            paras.append((runs, text))
+            paras.append((cur_y if cur_y is not None else 0.0, runs, text))
         cur.clear()
+        cur_y = pending_y = None
 
-    for raw, runs in _page_line_runs(page, base):
+    for raw, runs, y in _page_line_runs(page, base):
         line = raw.strip()
         if not line:
             flush()
@@ -368,11 +397,28 @@ def _split_styled_paragraphs(
         # 单独成行的 URL（页脚）
         if URL_ONLY_RE.fullmatch(line):
             continue
+        # 段落起点取第一个非噪声行的 y：噪声行不该把后面的正文往下推
+        if pending_y is None:
+            pending_y = y
+        if cur_y is None:
+            cur_y = pending_y
         cur.append(runs)
-        if line[-1] in END_PUNCT and len(line) > 6:
+        if _ends_sentence(line) and len(line) > 6:
             flush()
     flush()
     return paras
+
+
+def _line_y(line) -> float:
+    """一行的顶部 y（用 bbox；缺失时退回 span 原点）。"""
+    bbox = line.get("bbox")
+    if bbox:
+        return float(bbox[1])
+    for span in line.get("spans", []):
+        origin = span.get("origin")
+        if origin:
+            return float(origin[1])
+    return 0.0
 
 
 def _detect_heading_y(page, body_size: float) -> dict:
@@ -406,14 +452,20 @@ def _detect_heading_y(page, body_size: float) -> dict:
 
 
 def parse_pdf_stream(
-    data: bytes, default_title: str = "未命名教材", assets_dir=None
+    data: bytes,
+    default_title: str = "未命名教材",
+    assets_dir=None,
+    book_id: str = "",
 ) -> ParsedBook:
     """解析 PDF 字节流。
 
-    `assets_dir` 给出时，页内插图会抽取落盘到该目录（阶段 3 启用）；为 None
-    则纯文本解析、不产生任何文件。参数先占位，让 ingest 的调用契约现在就稳定。
+    `assets_dir` 给出时，页内插图会抽取落盘到该目录、表格会抽成行列结构；
+    为 None 则只解析文本、不产生任何文件（单元测试默认走这条路径）。
+    `book_id` 只用于给落盘的资源命名，便于定位。
     """
     doc = fitz.open(stream=data, filetype="pdf")
+    assets_dir = Path(assets_dir) if assets_dir is not None else None
+    tables_skipped = False
     try:
         n_pages = doc.page_count
         if n_pages == 0:
@@ -488,6 +540,10 @@ def parse_pdf_stream(
             end_pno = max(end_pno, pno)  # 同页起始的相邻章节不要退化成空章
             chapters.append(ParsedChapter(num=idx + 1, title=ctitle, page_start=pno + 1, page_end=end_pno + 1))
 
+        # 插图/表格的提取范围：见 assets.TABLE_SCAN_MAX_PAGES 的说明。
+        # 表格提取比读图贵两个数量级，大书里只提图、并把「表格没提」如实告诉用户。
+        with_tables = n_pages <= TABLE_SCAN_MAX_PAGES
+
         # 段落切分（小节标题目前与正文同段落，仅按行尾标点断段）
         for ch in chapters:
             seq = 0
@@ -497,18 +553,52 @@ def parse_pdf_stream(
             for pno in page_nos:
                 if pno >= n_pages:
                     continue
-                for runs, text in _split_styled_paragraphs(doc[pno], skip_lines=margin_lines, base=base):
+                page = doc[pno]
+                # 正文段落与插图/表格按纵向位置合并，插回原来的阅读顺序
+                entries: List[Tuple[float, int, ParsedSection]] = []
+                for order, (y, runs, text) in enumerate(
+                    _split_styled_paragraphs(page, skip_lines=margin_lines, base=base)
+                ):
                     kind = "formula" if looks_like_formula(text) else "p"
-                    seq += 1
-                    ch.sections.append(
-                        ParsedSection(
-                            seq=seq,
-                            page=pno + 1,
-                            text=text,
-                            kind=kind,
-                            content=runs_payload(runs),
+                    entries.append(
+                        (
+                            y,
+                            order,
+                            ParsedSection(
+                                seq=0, page=pno + 1, text=text, kind=kind, content=runs_payload(runs)
+                            ),
                         )
                     )
+                page_assets = extract_page_assets(
+                    page,
+                    pno + 1,
+                    book_id,
+                    assets_dir,
+                    with_tables=with_tables,
+                    table_over_limit=not with_tables,
+                )
+                if page_assets.tables_skipped:
+                    tables_skipped = True
+                for offset, asset in enumerate(page_assets.items):
+                    entries.append(
+                        (
+                            asset.y,
+                            len(entries) + offset,
+                            ParsedSection(
+                                seq=0,
+                                page=pno + 1,
+                                text=asset.text,
+                                kind=asset.kind,
+                                content=asset.content,
+                            ),
+                        )
+                    )
+
+                entries.sort(key=lambda item: (item[0], item[1]))
+                for _y, _order, section in entries:
+                    seq += 1
+                    section.seq = seq
+                    ch.sections.append(section)
             # 首段若以章节标题开头（提取时与正文合并），剥离标题。
             # 片段也要跟着剪掉同样的前缀，否则 text 与片段拼出来的文本会不一致。
             first = ch.sections[0] if ch.sections else None
@@ -517,6 +607,11 @@ def parse_pdf_stream(
                 first.content = _strip_prefix_from_content(first.content, stripped)
                 first.text = stripped
 
+        if tables_skipped:
+            notes.append(
+                f"这本书超过 {TABLE_SCAN_MAX_PAGES} 页，为避免导入过慢没有提取表格，"
+                "表格里的文字在阅读页看不到（正文与插图不受影响）"
+            )
         chapters = [c for c in chapters if c.sections]
         return ParsedBook(title=title, chapters=chapters, notes=notes)
     finally:

@@ -56,17 +56,22 @@ def detect_format(filename: str = "", content_type: str = "") -> Optional[str]:
 
 
 def parse_bytes(
-    fmt: str, data: bytes, default_title: str = "未命名教材", assets_dir: Optional[Path] = None
+    fmt: str,
+    data: bytes,
+    default_title: str = "未命名教材",
+    assets_dir: Optional[Path] = None,
+    book_id: str = "",
 ):
     """按格式解析为 ParsedBook（章节 → 段落，段落为最小锚点粒度）。
 
-    `assets_dir` 给出时，解析器把抽出的插图落盘到该目录（PDF 内嵌图片等）；
+    `assets_dir` 给出时，解析器把抽出的插图落盘到该目录、表格抽成行列结构；
     为 None 则只解析文本，不产生任何文件——单元测试默认走这条路径。
+    `book_id` 用于给落盘的资源命名，便于从库里反查。
     """
     if fmt == PDF:
-        return parse_pdf_stream(data, default_title, assets_dir)
+        return parse_pdf_stream(data, default_title, assets_dir, book_id)
     if fmt == DOCX:
-        return parse_docx_bytes(data, default_title, assets_dir)
+        return parse_docx_bytes(data, default_title, assets_dir, book_id)
     if fmt == TEXT:
         return parse_text_bytes(data, default_title)
     raise ValueError(SUPPORTED_MESSAGE)
@@ -115,11 +120,12 @@ def parse_and_store(
     这样「原文件是否留存」与「能否解析」解耦：先解析，全书读不出来就整体失败，
     不会在磁盘上留下一个对应的空教材文件。
     """
-    parsed = parse_bytes(fmt, data, default_title, assets_dir)
+    # book_id 先于解析生成：插图落盘要用它命名，好让资源和教材能互相反查
+    book_id = uuid.uuid4().hex[:8]
+    parsed = parse_bytes(fmt, data, default_title, assets_dir, book_id)
     if not parsed.chapters:
         raise ValueError("未能从文件中识别出章节内容")
 
-    book_id = uuid.uuid4().hex[:8]
     book_row = {
         "id": book_id,
         "title": parsed.title or default_title,
@@ -157,6 +163,9 @@ def parse_and_store(
                     "text": section.text,
                     "page": section.page,
                     "kind": section.kind,
+                    # 行内版式 / 插图 / 表格结构。空字典表示「没有额外版式」，
+                    # 渲染层据此把 text 当成单个纯文本片段。
+                    "content": section.content or {},
                 }
             )
             anchor_rows.append(

@@ -107,6 +107,26 @@ CREATE INDEX IF NOT EXISTS idx_thread_messages ON thread_messages(thread_id);
 """
 
 
+def _content_json(content: Any) -> str:
+    """段落的富文本内容 → 入库字符串。空内容存空串（省空间，也便于判「无版式」）。"""
+    if not content:
+        return ""
+    return json.dumps(content, ensure_ascii=False)
+
+
+def _load_content(raw: Any) -> Dict[str, Any]:
+    """入库字符串 → dict。空串或坏数据一律当「无版式」，绝不让一行脏数据炸掉整章。"""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        loaded = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -127,6 +147,9 @@ class Database:
         # 存 basename 而不是绝对路径，换 AI_READER_DATA_DIR 后老记录照样解析得到。
         ("books", "source_format", "TEXT DEFAULT ''"),
         ("books", "source_name", "TEXT DEFAULT ''"),
+        # 段落的行内版式 / 插图 / 表格结构（JSON）。空串表示「没有额外版式」，
+        # 渲染层把 text 当成单个纯文本片段——升级前入库的老数据因此无需迁移。
+        ("sections", "content", "TEXT DEFAULT ''"),
     )
 
     def init(self) -> None:
@@ -210,9 +233,18 @@ class Database:
                 )
             for s in sections:
                 conn.execute(
-                    "INSERT INTO sections(id,book_id,chapter_id,seq,text,page,kind) "
-                    "VALUES(?,?,?,?,?,?,?)",
-                    (s["id"], s["book_id"], s["chapter_id"], s["seq"], s["text"], s["page"], s["kind"]),
+                    "INSERT INTO sections(id,book_id,chapter_id,seq,text,page,kind,content) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        s["id"],
+                        s["book_id"],
+                        s["chapter_id"],
+                        s["seq"],
+                        s["text"],
+                        s["page"],
+                        s["kind"],
+                        _content_json(s.get("content")),
+                    ),
                 )
             for a in anchors:
                 conn.execute(
@@ -324,18 +356,44 @@ class Database:
         with self.connect() as conn:
             for s in sections:
                 conn.execute(
-                    "INSERT OR REPLACE INTO sections(id,book_id,chapter_id,seq,text,page,kind) "
-                    "VALUES(?,?,?,?,?,?,?)",
-                    (s["id"], s["book_id"], s["chapter_id"], s["seq"], s["text"], s["page"], s["kind"]),
+                    "INSERT OR REPLACE INTO sections(id,book_id,chapter_id,seq,text,page,kind,content) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        s["id"],
+                        s["book_id"],
+                        s["chapter_id"],
+                        s["seq"],
+                        s["text"],
+                        s["page"],
+                        s["kind"],
+                        _content_json(s.get("content")),
+                    ),
                 )
 
     def sections_of(self, book_id: str, chapter_id: str) -> List[Dict[str, Any]]:
+        """本章段落，按 seq 返回。
+
+        `content` 列存的是 JSON 字符串，这里就地解成 dict——调用方（序列化层）
+        只关心结构，不该再各自 json.loads 一遍。空串/坏数据一律当成 {}（无版式）。
+        """
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM sections WHERE book_id=? AND chapter_id=? ORDER BY seq",
                 (book_id, chapter_id),
             ).fetchall()
-            return [dict(r) for r in rows]
+            sections = [dict(r) for r in rows]
+        for section in sections:
+            section["content"] = _load_content(section.get("content"))
+        return sections
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sections WHERE book_id=? AND chapter_id=? ORDER BY seq",
+                (book_id, chapter_id),
+            ).fetchall()
+            sections = [dict(r) for r in rows]
+        for section in sections:
+            section["content"] = _load_content(section.get("content"))
+        return sections
 
     # ---------- 锚点 ----------
     def add_anchors(self, anchors: List[Dict[str, Any]]) -> None:

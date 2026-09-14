@@ -37,6 +37,12 @@ _HEADING_RE = re.compile(r"^Heading\s+(\d+)$", re.IGNORECASE)
 _TITLE_STYLES = ("title", "subtitle")
 #: WordprocessingML 命名空间：直接查 XML 里的表格 / 文本框 / 图片节点
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+#: DrawingML：图片本体（`<a:blip r:embed="rIdN">`）
+_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+#: 关系引用命名空间：从 rId 拿到文档包里的图片部件
+_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+#: 表格纯文本里单元格之间的分隔符（与 parsing.assets 保持一致）
+CELL_SEPARATOR = " | "
 
 #: 相对正文基准字号多大算「大一号 / 小一号」
 _BIG_RATIO = 1.15
@@ -131,18 +137,11 @@ def styled_runs_of(paragraph, body_size: Optional[float]) -> Tuple[List[Run], st
 
 
 def document_rows(document) -> List[Tuple[str, str, int, Optional[Dict[str, Any]]]]:
-    """读出 [(纯文本, 样式名, 层级, 富文本内容)]，跳过空段。"""
-    paragraphs = document.paragraphs
-    body_size = _body_size(paragraphs)
-    rows: List[Tuple[str, str, int, Optional[Dict[str, Any]]]] = []
-    for paragraph in paragraphs:
-        text = (paragraph.text or "").strip()
-        if not text:
-            continue
-        style = paragraph.style.name if paragraph.style is not None else "Normal"
-        runs, plain = styled_runs_of(paragraph, body_size)
-        rows.append((plain, style, _level_of(style), runs_payload(runs)))
-    return rows
+    """读出 [(纯文本, 样式名, 层级, 富文本内容)]，含表格，跳过空段。
+
+    这是 `block_entries` 的「不落盘」版本：不需要插图资源时用它，行为一致但更快。
+    """
+    return block_entries(document, assets_dir=None)
 
 
 def read_rows(data: bytes) -> List[Tuple[str, int, str]]:
@@ -158,34 +157,123 @@ def rows_of(document) -> List[Tuple[str, int, str]]:
 def skipped_notes(document) -> List[str]:
     """报告解析器**读不到**的内容，供上传后提示用。
 
-    `doc.paragraphs` 只覆盖正文顶层段落，下面这三类里都有文字但读不到，
-    也正是「上传后整本书只剩几百字」最常见的原因。
-
-    表格这一项在 phase 3 会被单独提取成 `kind='table'` 的段落，届时这里
-    要改成只报真正还读不到的（文本框、图片里的文字）；现在表格确实一个字
-    都没进正文，如实报告。
+    表格里的文字现在会被抽成 `kind='table'` 的段落（见 `block_entries`），
+    所以不再算「读不到」；剩下真正读不到的只有文本框，以及图片里**印着的文字**
+    （图片本身会被落盘渲染，但它里面的字不参与检索）。
     """
     def count(tag: str) -> int:
         return len(document.element.body.findall(f".//{{{_W_NS}}}{tag}"))
 
     found: List[str] = []
-    for tag, label in (("tbl", "个表格"), ("txbxContent", "个文本框"), ("drawing", "张图片")):
+    for tag, label in (("txbxContent", "个文本框"), ("drawing", "张图片")):
         total = count(tag)
         if total:
             found.append(f"{total} {label}")
     return found
 
 
+def _table_row_texts(table) -> List[List[str]]:
+    """表格 → 行列纯文本矩阵（单元格内换行拼成空格）。"""
+    rows: List[List[str]] = []
+    for row in table.rows:
+        cells = [" ".join((cell.text or "").split()) for cell in row.cells]
+        rows.append(cells)
+    return rows
+
+
+def _table_content(rows: List[List[str]]) -> Optional[Dict[str, Any]]:
+    rows = [row for row in rows if any(cell for cell in row)]
+    if not rows:
+        return None
+    return {
+        "rows": [[{"text": cell} for cell in row] for row in rows],
+        # 首行当表头：Word 表格绝大多数首行是列名
+        "header": len(rows) > 1,
+    }
+
+
+def _table_plain_text(rows: List[List[str]]) -> str:
+    return "\n".join(CELL_SEPARATOR.join(row) for row in rows)
+
+
+def _image_entries(paragraph, document, assets_dir, book_id: str, page: int) -> List[Dict[str, Any]]:
+    """把一个段落里内嵌的图片落盘并产出插图内容。
+
+    `doc.paragraphs` 读得到带图的段落（图在 run 里），但读不到图本身，
+    所以要下到 XML 里找 `<w:drawing>`，再用 `rId` 去文档包的关系表取图片字节。
+    """
+    entries: List[Dict[str, Any]] = []
+    for drawing in paragraph._element.findall(f".//{{{_W_NS}}}drawing"):
+        for blip in drawing.findall(f".//{{{_A_NS}}}blip"):
+            rel_id = blip.get(f"{{{_R_NS}}}embed")
+            if not rel_id:
+                continue
+            try:
+                part = document.part.related_parts[rel_id]
+                blob = part.blob
+                ext = (getattr(part, "partname", "").rpartition(".")[2] or "png").lower()
+            except (KeyError, AttributeError) as exc:
+                logger.debug("Word 图片关系读取失败（%s）：%s", rel_id, exc)
+                continue
+            name = f"{book_id}-p{page}-img{len(entries)}.{ext}"
+            try:
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                (assets_dir / name).write_bytes(blob)
+            except OSError as exc:
+                logger.debug("Word 图片落盘失败（%s）：%s", name, exc)
+                continue
+            entries.append({"asset": name})
+    return entries
+
+
+def block_entries(
+    document, assets_dir=None, book_id: str = ""
+) -> List[Tuple[str, str, int, Optional[Dict[str, Any]]]]:
+    """按**文档顺序**读出 [(纯文本, 样式名, 层级, 富文本内容)]，含表格与插图。
+
+    必须遍历 `document.element.body` 的子节点，不能只用 `document.paragraphs`：
+    后者会把表格整个跳过，于是表格前后的文字被拼在一起，表格也不知落在哪。
+    """
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    paragraphs = document.paragraphs
+    body_size = _body_size(paragraphs)
+    entries: List[Tuple[str, str, int, Optional[Dict[str, Any]]]] = []
+    page = 1  # Word 没有物理页码，这里只用于给落盘的资源命名
+    for child in document.element.body.iterchildren():
+        if child.tag == f"{{{_W_NS}}}tbl":
+            rows = _table_row_texts(Table(child, document))
+            content = _table_content(rows)
+            if content is None:
+                continue
+            entries.append((_table_plain_text(rows), "Normal", 0, content))
+            continue
+        if child.tag != f"{{{_W_NS}}}p":
+            continue
+        paragraph = Paragraph(child, document)
+        if assets_dir is not None and book_id:
+            for image in _image_entries(paragraph, document, assets_dir, book_id, page):
+                entries.append(("", "Normal", 0, image))
+        text = (paragraph.text or "").strip()
+        if not text:
+            continue
+        style = paragraph.style.name if paragraph.style is not None else "Normal"
+        runs, plain = styled_runs_of(paragraph, body_size)
+        entries.append((plain, style, _level_of(style), runs_payload(runs)))
+    return entries
+
+
 def parse_docx_bytes(
-    data: bytes, default_title: str = "未命名教材", assets_dir=None
+    data: bytes, default_title: str = "未命名教材", assets_dir=None, book_id: str = ""
 ) -> ParsedBook:
     """解析 .docx 字节流。
 
-    `assets_dir` 给出时，文档内嵌图片会落盘到该目录（阶段 3 启用）；为 None
-    则纯文本解析、不产生任何文件。参数先占位，让 ingest 的调用契约现在就稳定。
+    `assets_dir` 给出时，文档内嵌图片会抽取落盘到该目录、表格抽成行列结构；
+    为 None 则只解析文本、不产生任何文件（单元测试默认走这条路径）。
     """
     document = Document(io.BytesIO(data))
-    rows = document_rows(document)
+    rows = block_entries(document, assets_dir=assets_dir, book_id=book_id)
 
     title = ""
     body: List[Tuple[str, int, Optional[Dict[str, Any]]]] = []

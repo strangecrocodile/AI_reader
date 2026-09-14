@@ -73,3 +73,77 @@ def demo_markdown_bytes():
         "如果函数在闭区间上连续、在开区间内可导，就称它满足罗尔定理的条件。\n"
     )
     return text.encode("utf-8")
+
+
+@pytest.fixture(scope="session")
+def demo_docx_with_assets_bytes():
+    """带**表格与插图**的 Word 教材样例（现场生成，版权安全）。
+
+    这两类内容都不在 `doc.paragraphs` 里：表格是 body 的同级 `w:tbl`，
+    图片藏在 run 的 `w:drawing` 里。所以专门造一份来验证它们确实被读出来了。
+    """
+    import io
+
+    from docx import Document
+    from docx.shared import Inches
+
+    document = Document()
+    document.add_heading("第1章 带图表的教材", level=1)
+    document.add_paragraph("下面是一张表：")
+    table = document.add_table(rows=2, cols=3)
+    for index, text in enumerate(("概念", "记号", "含义")):
+        table.cell(0, index).text = text
+    for index, text in enumerate(("导数", "f′(x)", "瞬时变化率")):
+        table.cell(1, index).text = text
+    document.add_paragraph("下面是一张图：")
+    document.add_picture(io.BytesIO(_tiny_png()), width=Inches(1.2))
+    document.add_paragraph("图后还有一段正文。")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _tiny_png() -> bytes:
+    """8x8 的纯色 PNG（够小，但足以验证落盘与可读）。"""
+    import struct
+    import zlib
+
+    width = height = 8
+    raw = b"".join(b"\x00" + bytes([200, 60, 60]) * width for _ in range(height))
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload))
+            + tag
+            + payload
+            + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+@pytest.fixture(scope="session")
+def demo_pdf_with_image_bytes():
+    """带插图的 PDF 样例（现场生成）：验证插图会被抽出、落盘、可访问。"""
+    import io
+
+    import pymupdf as fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 80), "Chapter 1 Demo", fontsize=20)
+    # 用英文句号断句（切段规则见 pdf._ends_sentence）：
+    # PDF 内置字体画不出中文，样例用 ASCII 更稳妥。
+    page.insert_text((72, 120), "Body text before the figure.", fontsize=11)
+    page.insert_image(fitz.Rect(72, 160, 272, 300), stream=_tiny_png())
+    page.insert_text((72, 340), "Body text after the figure.", fontsize=11)
+    data = doc.tobytes()
+    doc.close()
+    return data

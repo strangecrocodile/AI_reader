@@ -56,6 +56,21 @@ class Run:
     style: Tuple[str, ...] = ()
 
 
+def kind_of_content(content: Optional[Dict[str, Any]]) -> str:
+    """内容自带的块类型：插图与表格不是段落，渲染方式完全不同。
+
+    放在这里而不是让每个解析器各判一遍：PDF 与 Word 都会产出这两类内容，
+    判定口径必须一致，否则同一张插图在两种来源下的 kind 会不一样。
+    """
+    if not content:
+        return "p"
+    if content.get("asset"):
+        return "image"
+    if content.get("rows"):
+        return "table"
+    return "p"
+
+
 @dataclass
 class ParsedSection:
     seq: int
@@ -277,15 +292,20 @@ def build_blocks(rows: List[Tuple[str, int]]) -> List[Block]:
     front: List[Tuple[str, str, Optional[Dict[str, Any]]]] = []
 
     def kind_of(text: str, level: int) -> str:
+        # 插图/表格的块类型由内容自身决定，与标题层级无关
+        by_content = kind_of_content(content)
+        if by_content != "p":
+            return by_content
         if chapter_level is not None and level > chapter_level:
             return "heading"
         if chapter_level is None and len(text) <= 40 and SECTION_TITLE_RE.match(text):
             return "heading"
         return "formula" if looks_like_formula(text) else "p"
-
     for text, level, content in rows:
         text = text.strip()
-        if not text:
+        # 插图/表格只有占位说明、没有真正的正文文字，但**不能**因为 strip 后为空就丢：
+        # 它们的 content 才是要看的东西。
+        if not text and not kind_of_content(content) in ("image", "table"):
             continue
         # 比「章」更浅的标题是书名/篇名，不作为正文段落
         if chapter_level is not None and 1 <= level < chapter_level:
@@ -335,7 +355,11 @@ def assemble_book(
             content = entry[2] if len(entry) > 2 else None
             text = (text or "").strip()
             if not text:
-                continue
+                # 插图没有文字，但 content 才是要看的东西，不能当空段落丢掉。
+                # 给一句可读的说明，它同时是锚点文本与检索时的占位。
+                if kind != "image":
+                    continue
+                text = "（插图）"
             page = 1 + chars_used // CHARS_PER_PAGE
             chars_used += len(text)
             chapter.sections.append(

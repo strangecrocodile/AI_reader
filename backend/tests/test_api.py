@@ -766,14 +766,17 @@ def test_stream_fallback_answer_stays_grounded(client):
 # ---------- 解析受限提示：上传后告诉用户「内容可能没读全」 ----------
 
 
-def test_upload_reports_content_warning_when_text_hides_in_tables(client):
-    """正文全在表格里时，上传响应必须带上 contentWarning，而不是让用户自己去猜。"""
+def test_upload_reports_content_warning_when_body_is_too_thin(client):
+    """正文过少时，上传响应必须带上 contentWarning，而不是让用户自己去猜。
+
+    表格现在会被抽成 kind='table' 的段落，所以「正文过少」要靠真的少来触发
+    （这里正文只有一句话），不再拿表格当丢内容的例子。
+    """
     from docx import Document as _Document
 
     document = _Document()
     document.add_heading("第1章 测试", level=1)
     document.add_paragraph("短短一句话。")
-    document.add_table(rows=3, cols=2)
     buffer = io.BytesIO()
     document.save(buffer)
 
@@ -790,7 +793,7 @@ def test_upload_reports_content_warning_when_text_hides_in_tables(client):
 
     assert resp.status_code == 201, resp.text
     warning = resp.json()["contentWarning"]
-    assert "个字" in warning and "表格" in warning
+    assert "个字" in warning
     # 提示要能一路带到列表接口（刷新页面后仍然看得到）
     listed = next(b for b in client.get("/api/books").json() if b["id"] == resp.json()["id"])
     assert listed["contentWarning"] == warning

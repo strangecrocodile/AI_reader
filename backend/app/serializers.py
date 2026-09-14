@@ -2,7 +2,7 @@
 from typing import Any, Dict, List, Optional
 
 from .db import Database
-from .parsing.base import CHAPTER_TITLE_RE
+from .parsing.base import CHAPTER_TITLE_RE, STYLE_TOKENS
 from .services import lesson, plan as plan_service
 
 
@@ -84,20 +84,12 @@ def chapter_content(db: Database, llm, book: Dict, chapter: Dict) -> Dict[str, A
             continue
         if s["kind"] == "formula":
             paragraphs.append({"type": "formula", "parts": [s["text"]]})
+        elif s["kind"] == "image":
+            paragraphs.append(_image_paragraph(s))
+        elif s["kind"] == "table":
+            paragraphs.append(_table_paragraph(s))
         else:
-            paragraphs.append(
-                {
-                    "type": "p",
-                    "segs": [
-                        {
-                            "t": "src",
-                            "id": s["id"],
-                            "v": s["text"],
-                            "kind": "definition" if s["seq"] == 1 else "plain",
-                        }
-                    ],
-                }
-            )
+            paragraphs.append({"type": "p", "segs": _segs_of(s)})
 
     points = []
     for kp in explanation.get("points", []):
@@ -131,6 +123,79 @@ def chapter_content(db: Database, llm, book: Dict, chapter: Dict) -> Dict[str, A
         "paragraphs": paragraphs,
         "knowledgePoints": points,
         "outline": outline,
+    }
+
+
+def _segs_of(section: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """段落 → 前端片段数组。
+
+    结构刻意保持「锚点在最内层」：`{t:'src', id, v:'', segs:[...]}`。这样
+    `data-source-id` 与锚点定位（跨章跳转、知识点回链）的既有逻辑一行都不用改，
+    段落里的粗体/斜体/上下标只是渲染细节。
+
+    没有版式信息时退回原来的「整段一个纯文本片段」，纯文本教材、Markdown 教材
+    和升级前入库的老数据都走这条路径。
+    """
+    runs = (section.get("content") or {}).get("runs")
+    if not runs:
+        # 没有版式信息：保持和以前完全一样的单片段结构（`v` 直接放正文），
+        # 纯文本/Markdown 教材与升级前入库的老数据走这条路径，前端行为不变。
+        return [
+            {
+                "t": "src",
+                "id": section["id"],
+                "v": section.get("text", ""),
+                "kind": "definition" if section.get("seq") == 1 else "plain",
+            }
+        ]
+
+    inner: List[Dict[str, Any]] = []
+    for run in runs:
+        text = str(run.get("text", ""))
+        if not text:
+            continue
+        style = [token for token in run.get("style", []) if token in STYLE_TOKENS]
+        inner.append({"t": "run", "v": text, "style": style} if style else {"t": "text", "v": text})
+    if not inner:
+        inner = [{"t": "text", "v": section.get("text", "")}]
+    # 有版式时锚点仍在最外层，行内片段作为它的子片段（`v` 留空，避免文本重复渲染）
+    return [
+        {
+            "t": "src",
+            "id": section["id"],
+            "v": "",
+            "kind": "definition" if section.get("seq") == 1 else "plain",
+            "segs": inner,
+        }
+    ]
+
+
+def _image_paragraph(section: Dict[str, Any]) -> Dict[str, Any]:
+    """插图段落。资源经 /assets 静态目录提供，前端按 URL 直接 <img>。"""
+    content = section.get("content") or {}
+    asset = str(content.get("asset", ""))
+    return {
+        "type": "image",
+        "id": section["id"],
+        "src": f"/assets/{asset}" if asset else "",
+        "width": content.get("width"),
+        "height": content.get("height"),
+        "caption": section.get("text", ""),
+    }
+
+
+def _table_paragraph(section: Dict[str, Any]) -> Dict[str, Any]:
+    """表格段落。单元格目前是纯文本，按行按列下发。"""
+    content = section.get("content") or {}
+    rows = [
+        [str(cell.get("text", "")) for cell in row]
+        for row in (content.get("rows") or [])
+    ]
+    return {
+        "type": "table",
+        "id": section["id"],
+        "rows": rows,
+        "header": bool(content.get("header")),
     }
 
 
