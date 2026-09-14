@@ -201,30 +201,44 @@ class KBAgent:
         self.graph = g
         return g
 
+    # ------------------------------------------------------------- P4：讲义生成
+    def build_lessons(self, out_dir: str | Path | None = None) -> dict:
+        """为所有章节生成讲义 JSON（前端契约：knowledgePoints 带锚点回链）。"""
+        from .lesson import build_all_lessons
+
+        base = Path(out_dir) if out_dir else (Path(self.result.manifest_path).parent if self.result else Path("."))
+        concepts_path = base / "concepts.json"
+        if not concepts_path.exists():
+            self.extract_concepts(base)
+        idx = build_all_lessons(Path(self.result.manifest_path), concepts_path, base / "lessons")
+        self.lessons = idx
+        return idx
+
 
 def main() -> None:  # pragma: no cover
     import argparse
     import sys
 
-    parser = argparse.ArgumentParser(description="教材入库 Agent（P0–P3 全流程）")
-    parser.add_argument("docx", help="整本书 .docx 路径")
+    parser = argparse.ArgumentParser(description="教材入库 Agent（P0–P4：拆书/建库/问答/知识点/图谱/讲义）")
+    parser.add_argument("book", help="整本书路径（.docx / .txt / .md）")
     parser.add_argument("--workdir", default="data/out", help="输出目录（默认 data/out）")
     parser.add_argument("--book-id", default="b1")
     parser.add_argument("--char-limit", type=int, default=SPLIT_CHAR_LIMIT)
     parser.add_argument("--query", default="", help="建库后执行一条检索问答")
     parser.add_argument("--extract", action="store_true", help="建库后执行 V2 知识点抽取（LLM 优先，规则兜底）")
     parser.add_argument("--graph", action="store_true", help="建库后生成概念关系图谱数据 graph.json")
+    parser.add_argument("--lessons", action="store_true", help="生成各章讲义 JSON（前端契约，含锚点回链）")
     args = parser.parse_args()
 
     agent = KBAgent(book_id=args.book_id, char_limit=args.char_limit)
-    agent.run(args.docx, args.workdir)
+    agent.run(args.book, args.workdir)
     print(agent.summarize())
     if args.query:
         print("\n[问答]", args.query)
         res = agent.ask(args.query)
         for h in res["hits"]:
             print(f"  [{h['score']}] (章 {h['chapter_id']}) {h['text'][:60]}…  锚点: {h['anchors'][:3]}")
-    if args.extract or args.graph:
+    if args.extract or args.graph or args.lessons:
         ex = agent.extract_concepts()
         print(f"\n[知识点抽取] methods={ex['methods']} chapters={ex['chapters']} concepts={len(ex['concepts'])}")
         print(f"产物：{ex.get('out_path')}")
@@ -232,6 +246,12 @@ def main() -> None:  # pragma: no cover
         g = agent.build_graph()
         print(f"[概念图谱] {g['meta']}")
         print(f"产物：{g.get('out_path')}")
+    if args.lessons:
+        idx = agent.build_lessons()
+        total = sum(c["knowledgePoints"] for c in idx["chapters"])
+        print(f"[讲义生成] {len(idx['chapters'])} 章 / {total} 知识点")
+        for c in idx["chapters"]:
+            print(f"  {c['id']}《{c['title'][:20]}》{c['knowledgePoints']} 个（契约错误 {c['errors']}）")
 
 
 if __name__ == "__main__":

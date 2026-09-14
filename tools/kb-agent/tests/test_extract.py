@@ -82,6 +82,31 @@ def test_invalid_llm_output_falls_back_to_rule(tmp_path: Path):
     assert res["concepts"]
 
 
+def test_llm_empty_then_retry_succeeds(tmp_path: Path):
+    """首次返回空数组 → 缩小材料重试一次并成功（避免整章退化为规则）。"""
+    manifest, anchors = _prepare_manifest(tmp_path)
+    real_anchor = next(iter(anchors))
+
+    class RetryLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, messages):  # noqa: N802
+            self.calls += 1
+            if self.calls == 1:
+                return "[]"
+            return json.dumps(
+                [{"concept": "概念X", "definition": "定义为某种方法", "prerequisites": [], "example": "", "anchors": [real_anchor]}],
+                ensure_ascii=False,
+            )
+
+    llm = RetryLLM()
+    res = extract_from_manifest(manifest, llm=llm)
+    assert "llm" in res["methods"]
+    assert llm.calls >= 2  # 确实发生了重试
+    assert res["concepts"]
+
+
 def test_parse_json_array_with_fence_and_prefix():
     raw = "好的：\n```json\n[{\"concept\": \"x\"}]\n```\n"
     assert _parse_json_array(raw) == [{"concept": "x"}]

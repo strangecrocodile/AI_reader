@@ -20,8 +20,9 @@
 | V2.5 概念图谱 | prerequisites→边、概念跨章合并去重、未解析前置单列 | `graph.json` |
 | 图谱预览 | Cytoscape 单文件预览（数据内嵌，双击即开） | `graph-preview.html` |
 | 思维导图 | 层级 Markdown 大纲 + markmap 渲染（可直接导入 markmap REPL / XMind） | `mindmap.md` / `mindmap.html` |
+| **P4 讲义生成** | 概念层 + 原文锚点 → **前端契约讲义 JSON**（`heading/intro/paragraphs/knowledgePoints/outline`，知识点正文含可点击 `{t:'src'}` 锚点片段，按前置依赖拓扑排序） | `lessons/*.json` + `lessons/index.json` |
 
-真书验证：《动手学深度学习》(d2l-zh, Apache-2.0) 6 章 → 7 份章节 docx / 79 检索块 / 58 知识点 / 图谱 57 节点 48 边。测试 **52 项**。
+真书验证：《动手学深度学习》(d2l-zh, Apache-2.0) 6 章 → 7 份章节 docx / 79 检索块 / **73 知识点** / 图谱 **72 节点 72 边** / **6 章讲义（73 知识点，契约校验 0 错误）**。测试 **58 项**。
 
 ## 处理流水线（P0–P3 已实现）
 
@@ -53,13 +54,20 @@ RAG 知识库（JSON 持久化）→ 余弦检索
 kb-agent/
 ├── src/kb_agent/
 │   ├── textstats.py   # 字数统计（口径统一）✅
-│   ├── parse.py       # docx → 段落行（文本+样式+层级）✅
+│   ├── parse.py       # docx/txt/md → 段落行（文本+样式+层级）✅
 │   ├── split.py       # 章节识别 + 拆书 + manifest ✅
 │   ├── build_kb.py    # 切块 + 向量 + BM25/RRF 混合检索 ✅
 │   ├── embeddings.py  # 嵌入工厂：API/本地语义模型 → 哈希回退 ✅
-│   └── agent.py       # Agent 编排（run/ask/summarize + LangChain 工具）✅
-├── scripts/make_sample_book.py  # 生成原创样例教材（版权安全）
-├── tests/             # pytest（22 项）
+│   ├── extract.py     # V2 知识点抽取（LLM 优先，规则兜底 + 重试）✅
+│   ├── graph.py       # V2.5 概念图谱数据（prerequisites→边）✅
+│   ├── lesson.py      # P4 讲义生成（前端契约 JSON + 契约校验）✅
+│   ├── langsmith_trace.py / llm_chat.py / config_env.py  # 追踪 / DeepSeek / .env
+│   └── agent.py       # Agent 编排（run/ask/extract/graph/lessons + LangChain 工具）✅
+├── scripts/
+│   ├── make_sample_book.py       # 生成原创样例教材（版权安全）
+│   ├── make_graph_preview.py     # 图谱预览 HTML
+│   └── make_mindmap_preview.py   # 思维导图（markmap）预览
+├── tests/             # pytest（58 项）
 ├── data/              # 运行期产物（不入库）
 └── requirements.txt
 ```
@@ -74,10 +82,10 @@ python -m venv .venv
 # 生成原创样例教材（可选）
 .venv\Scripts\python.exe scripts\make_sample_book.py
 
-# 全流程演示：分析 → 拆书 → 建库 → 问答
+# 全流程演示：分析 → 拆书 → 建库 → 问答 →（可选）知识点/图谱/讲义
 $env:PYTHONPATH = 'src'
 .venv\Scripts\python.exe -m kb_agent.agent data/source/sample_book.docx `
-    --workdir data/out --query "什么是导数？"
+    --workdir data/out --query "什么是导数？" --extract --graph --lessons
 
 # 测试
 .venv\Scripts\python.exe -m pytest

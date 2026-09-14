@@ -155,19 +155,24 @@ def extract_from_manifest(manifest_path: str | Path, out_path: str | Path | None
         valid = {p["anchor"] for p in paragraphs}
         if not paragraphs:
             continue
+        handled = False
         if llm is not None:
-            material = _text_with_anchors(paragraphs)
-            user = f"请抽取「{ch['chapter_title']}」的知识点。教材段落：\n{material}"
-            try:
-                raw = llm.complete([{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user}])
-                parsed = _parse_json_array(raw)
-                concepts = _normalize_concepts(parsed, valid, ch["chapter_id"])
+            # 材料过长时模型容易返回不可用结果：先全量，再缩小材料重试一次
+            for limit in (PER_CHAPTER_CHARS, max(2000, PER_CHAPTER_CHARS // 2)):
+                material = _text_with_anchors(paragraphs, limit)
+                user = f"请抽取「{ch['chapter_title']}」的知识点。教材段落：\n{material}"
+                try:
+                    raw = llm.complete([{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user}])
+                    concepts = _normalize_concepts(_parse_json_array(raw), valid, ch["chapter_id"])
+                except Exception:  # noqa: BLE001 —— 该轮输出非法则作废
+                    concepts = []
                 if concepts:
                     methods.add("llm")
                     all_concepts.extend(concepts)
-                    continue
-            except Exception:  # noqa: BLE001 —— LLM 输出非法则回退规则
-                pass
+                    handled = True
+                    break
+        if handled:
+            continue
         methods.add("rule")
         rule = rule_extract(paragraphs)
         for c in rule:
