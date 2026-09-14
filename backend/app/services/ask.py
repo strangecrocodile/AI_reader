@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 MAX_EVIDENCE = 3
 NO_EVIDENCE_TEXT = "教材中未找到直接依据"
 STREAM_CHUNK_CHARS = 14
+#: 兜底答案里每条原文摘录的字数上限
+EXCERPT_CHARS = 120
+#: 兜底答案的开场说明：讲清「为什么只有原文」，避免被误读成模型的回答
+FALLBACK_NOTICE = "（未接入大模型，这里直接给出教材中与你的问题最相关的原文，可对照核对。）"
 _CITATION_RE = re.compile(r"\[(\d+)\]")
 
 
@@ -140,7 +144,7 @@ def answer_question(
             logger.warning("LLM 问答失败，回退规则答案: %s", e)
 
     if result is None:
-        result = _result(_rule_answer(question, evidence), evidence, prepared)
+        result = _result(_rule_answer(evidence), evidence, prepared)
     _persist_exchange(db, thread, question, result)
     return {**result, "threadId": thread["id"] if thread else None}
 
@@ -211,7 +215,7 @@ def stream_answer(
             chunks = []
 
     if not chunks:
-        answer = _rule_answer(question, evidence)
+        answer = _rule_answer(evidence)
         for chunk in _chunk_text(answer):
             yield {"event": "delta", "text": chunk}
         chunks = [answer]
@@ -240,13 +244,18 @@ def _chunk_text(text: str, size: int = STREAM_CHUNK_CHARS) -> List[str]:
     return [text[i:i + size] for i in range(0, len(text), size)] or [""]
 
 
-def _rule_answer(question: str, evidence: List[Dict[str, Any]]) -> str:
-    q = question or ""
-    if "极限" in q or "为什么" in q:
-        return (
-            "因为我们要描述的是「某一瞬间」的变化，而平均变化率一定跨着一段区间。"
-            "让 Δx 不断变小，才能把这段区间压缩到目标时刻；极限存在，说明逼近的结果是稳定、唯一的。"
-        )
-    ev = evidence[0]
-    chapter = f"《{ev['chapter_title']}》" if ev.get("chapter_title") else ""
-    return f"根据{chapter}第 {ev['page']} 页的表述，{ev['text'][:60]}{'…' if len(ev['text']) > 60 else ''}。你可以继续针对这一部分追问。"
+def _rule_answer(evidence: List[Dict[str, Any]]) -> str:
+    """无模型 / 模型调用失败时的兜底：不生成内容，只列教材原文。
+
+    关键约束：兜底答案也必须**可溯源**——每条摘录带 `[n]` 编号，由 `_result` 反查
+    出锚点，前端据此回跳原文。绝不返回与教材无关的通用讲解：那会直接违背
+    「回答以教材为边界」这条产品边界（详见 docs/产品设计文档.md 第 4.4 节）。
+    """
+    lines = [FALLBACK_NOTICE]
+    for index, item in enumerate(evidence, start=1):
+        chapter = f"《{item['chapter_title']}》" if item.get("chapter_title") else ""
+        excerpt = (item.get("text") or "").strip()
+        if len(excerpt) > EXCERPT_CHARS:
+            excerpt = excerpt[:EXCERPT_CHARS] + "…"
+        lines.append(f"[{index}] {chapter}第 {item['page']} 页：{excerpt}")
+    return "\n".join(lines)

@@ -289,9 +289,18 @@ class Database:
             return dict(row) if row else None
 
     def anchors_of(self, book_id: str, chapter_id: str) -> List[Dict[str, Any]]:
+        """本章锚点，**按段落先后顺序**返回。
+
+        必须按 sections.seq 排，不能按 section_id 排：id 形如 `{book}-s1-10`，
+        字典序下 `-s1-10` 会插到 `-s1-2` 前面，段落一旦满 10 段顺序就整体错乱，
+        进而打乱讲义、知识点抽取和「学习顺序」边（与 sections_of 保持一致）。
+        """
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM anchors WHERE book_id=? AND chapter_id=? ORDER BY section_id",
+                "SELECT a.* FROM anchors a "
+                "LEFT JOIN sections s ON s.id = a.section_id "
+                "WHERE a.book_id=? AND a.chapter_id=? "
+                "ORDER BY COALESCE(s.seq, 9223372036854775807), a.section_id",
                 (book_id, chapter_id),
             ).fetchall()
             return [dict(r) for r in rows]

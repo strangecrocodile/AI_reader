@@ -689,3 +689,71 @@ def test_learned_progress_is_not_downgraded_by_revisiting(client, demo_pdf_bytes
     refreshed = client.get(f"/api/books/{book['id']}").json()
     assert refreshed["chapters"][0]["status"] == "learned"
     assert refreshed["chapters"][0]["progressPct"] == 100
+
+
+def test_anchors_keep_paragraph_order_in_long_chapter(client, app):
+    """单章段落超过 10 段时，anchors_of 必须仍按段落先后返回。
+
+    锚点 id 形如 `{book}-s1-10`，按 id 字典序排会让第 10 段插到第 2 段前面，
+    打乱讲义、知识点抽取与「学习顺序」边（回归：原先用 ORDER BY section_id）。
+    """
+    paragraphs = [f"段落{i}的教材原文内容。" for i in range(1, 13)]
+    raw = ("第1章 长章节\n" + "\n".join(paragraphs) + "\n").encode("utf-8")
+    resp = client.post("/api/books", files={"file": ("长章节.txt", raw, "text/plain")})
+    assert resp.status_code == 201, resp.text
+    book = resp.json()
+
+    anchors = app.state.db.anchors_of(book["id"], book["chapters"][0]["id"])
+    assert [a["text"] for a in anchors] == paragraphs
+
+
+def test_fallback_answer_stays_grounded_in_textbook(client):
+    """无模型时的兜底答案必须是教材原文摘录，而不是与教材无关的通用讲解。
+
+    回归：兜底分支原先对含「为什么」的问题固定返回一段微积分讲解，
+    上传 Python 教材问「为什么列表是可变的」也会答成导数。
+    """
+    raw = (
+        "第1章 列表与可变对象\n"
+        "为什么列表是可变的？列表之所以被称为可变对象，是因为它支持原地修改："
+        "追加和删除都直接改变列表本身，而不创建新对象。\n"
+    ).encode("utf-8")
+    resp = client.post("/api/books", files={"file": ("Python编程.txt", raw, "text/plain")})
+    assert resp.status_code == 201, resp.text
+    book = resp.json()
+    chapter = book["chapters"][0]
+
+    data = client.post(
+        "/api/ask",
+        json={"question": "为什么列表是可变的？", "bookId": book["id"], "chapterId": chapter["id"]},
+    ).json()
+
+    assert "Δx" not in data["answer"], "兜底答案不得出现与教材无关的微积分内容"
+    assert "列表" in data["answer"], "兜底答案应引用教材原文"
+    assert data["sources"], "兜底答案仍然必须可溯源"
+    assert all(item["id"] in data["sources"] for item in data["sourceDetails"])
+
+
+def test_stream_fallback_answer_stays_grounded(client):
+    """流式链路走同一套兜底：逐块拼回来同样是教材原文，且带溯源锚点。"""
+    raw = (
+        "第1章 列表与可变对象\n"
+        "为什么列表是可变的？列表之所以被称为可变对象，是因为它支持原地修改："
+        "追加和删除都直接改变列表本身，而不创建新对象。\n"
+    ).encode("utf-8")
+    book = client.post(
+        "/api/books", files={"file": ("Python编程.txt", raw, "text/plain")}
+    ).json()
+    chapter = book["chapters"][0]
+
+    resp = client.post(
+        "/api/ask/stream",
+        json={"question": "为什么列表是可变的？", "bookId": book["id"], "chapterId": chapter["id"]},
+    )
+    frames = _sse_frames(resp.text)
+    answer = "".join(payload["text"] for event, payload in frames if event == "delta")
+    done = next(payload for event, payload in frames if event == "done")
+
+    assert "Δx" not in answer
+    assert "列表" in answer
+    assert done["sources"]
