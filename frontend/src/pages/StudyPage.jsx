@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import Reader from '../components/Reader.jsx';
+import Reader, { PAGE_MODE, SCROLL_MODE } from '../components/Reader.jsx';
 import CoachPanel from '../components/CoachPanel.jsx';
 import SelectionBubble from '../components/SelectionBubble.jsx';
 import { api } from '../services/api.js';
 import { truncate } from '../utils/text.js';
+import { useBooks } from '../state/BookContext.jsx';
 import { useToast } from '../state/ToastContext.jsx';
+
+/** 阅读方式记在本地：换章、重开页面都保持用户选的那一种。 */
+const VIEW_MODE_KEY = 'ai_reader.viewMode';
+
+function readViewMode() {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === PAGE_MODE ? PAGE_MODE : SCROLL_MODE;
+  } catch {
+    return SCROLL_MODE; // 隐私模式下 localStorage 可能不可用
+  }
+}
 
 /** 本地消息 id（后端持久化用自己的 id，这里只用于 React key 与流式定位）。 */
 let messageSeq = 0;
@@ -30,6 +42,10 @@ export default function StudyPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
+  // 章节列表复用主页那份（BookContext 只加载一次），不为导航额外发请求
+  const { books } = useBooks();
+  const chapters = books?.find((item) => item.id === bookId)?.chapters ?? [];
+  const [viewMode, setViewMode] = useState(readViewMode);
 
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -330,6 +346,24 @@ export default function StudyPage() {
     [activeThreadId, toast],
   );
 
+  /** 切换到另一章（顶部章节导航）。跨章定位原文走 handleOpenSource。 */
+  const handleSelectChapter = useCallback(
+    (id) => {
+      if (!id || id === chapterId) return;
+      navigate(`/study/${bookId}/${id}`);
+    },
+    [bookId, chapterId, navigate],
+  );
+
+  const handleViewModeChange = useCallback((mode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode);
+    } catch {
+      // 记不住阅读方式不影响本次阅读，忽略即可
+    }
+  }, []);
+
   if (loading) {
     return (
       <section className="page study" aria-busy="true">
@@ -356,7 +390,17 @@ export default function StudyPage() {
     <section className="page study">
       <div className="mobile-warning">为便于演示「原文—讲解」联动，请在桌面宽度下体验完整界面。</div>
       <div className="study-layout">
-        <Reader content={content} focusId={focusId} onSelect={handleSelect} onRead={handleRead} />
+        <Reader
+          content={content}
+          focusId={focusId}
+          onSelect={handleSelect}
+          onRead={handleRead}
+          chapters={chapters}
+          currentChapterId={chapterId}
+          onSelectChapter={handleSelectChapter}
+          viewMode={viewMode}
+          onViewModeChange={handleViewModeChange}
+        />
         <CoachPanel
           content={content}
           thread={activeThread}

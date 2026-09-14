@@ -100,6 +100,48 @@ describe('主页', () => {
     fetchBooks.mockRestore();
   });
 
+  it('解析受限时上传后给出提示，且不自动关闭弹窗', async () => {
+    const uploaded = {
+      ...mockBooks[0],
+      id: 'thin',
+      title: '窄教材',
+      contentWarning: '整本教材只解析出 6 个字的正文，内容可能大部分没被读出来；1 个表格',
+      cover: { ...mockBooks[0].cover, lines: ['窄教材'] },
+    };
+    const fetchBooks = vi
+      .spyOn(api, 'fetchBooks')
+      .mockResolvedValueOnce(mockBooks)
+      .mockResolvedValueOnce([...mockBooks, uploaded]);
+    vi.spyOn(api, 'uploadBook').mockResolvedValue(uploaded);
+
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText('正在学习的教材');
+    await user.click(screen.getByRole('button', { name: /更换教材/ }));
+
+    const file = new File(['docx'], 'course.docx', { type: 'application/docx' });
+    fireEvent.change(screen.getByLabelText('选择教材文件'), { target: { files: [file] } });
+
+    // 提示要让用户读完并知道怎么补救，所以弹窗必须留着，不能一闪而过
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('内容可能没被完整读取');
+    expect(alert).toHaveTextContent('6 个字');
+    expect(alert).toHaveTextContent('1 个表格');
+    expect(alert).toHaveTextContent('表格里');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // 点「知道了」才关闭；重开时提示不残留
+    await user.click(screen.getByRole('button', { name: '知道了，先这样看' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /更换教材/ }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    // 提示随教材存库，重开弹窗在教材条目上仍能看到标记
+    expect(screen.getByText('⚠ 内容可能没读全')).toBeInTheDocument();
+
+    fetchBooks.mockRestore();
+  });
+
   it('选择 Word 教材时同样可以上传并切换', async () => {
     const uploaded = {
       ...mockBooks[0],
@@ -581,5 +623,139 @@ describe('空态与异常兜底', () => {
 
     await screen.findByText('正在学习的教材');
     expect(screen.getByText('✓')).toBeInTheDocument();
+  });
+});
+
+describe('章节导航与分页阅读', () => {
+  /**
+   * 让段落块「量出」固定高度。
+   * jsdom 没有排版引擎，`getBoundingClientRect()` 一律返回 0——不伪造的话
+   * 分页永远只有一页，多页逻辑就测不到了。
+   */
+  function stubBlockLayout(blockHeight = 400) {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function measure() {
+      const index = this.dataset?.blockIndex;
+      const top = index === undefined ? 0 : Number(index) * blockHeight;
+      const bottom = index === undefined ? 0 : top + blockHeight;
+      return {
+        top,
+        bottom,
+        height: bottom - top,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: top,
+        toJSON() {},
+      };
+    });
+  }
+
+  it('学习页顶部提供章节导航，列出本章所在教材的全部章节', async () => {
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+
+    const select = screen.getByLabelText('选择章节');
+    expect(select).toHaveValue('ch2');
+    expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+      '01 · 函数与极限',
+      '02 · 导数与微分',
+      '03 · 微分中值定理',
+    ]);
+  });
+
+  it('点「下一章」跳到下一章（这里落到了未准备内容的占位页）', async () => {
+    const user = userEvent.setup();
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+
+    expect(screen.getByRole('button', { name: /上一章/ })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: /下一章/ }));
+
+    await screen.findByText('本章内容尚未准备');
+  });
+
+  it('切到分页模式：按段落高度分页并显示页码，首尾页按钮正确禁用', async () => {
+    stubBlockLayout(400);
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+
+    expect(screen.queryByText(/第 1 \/ \d+ 页/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '分页' }));
+
+    // 本章 5 个段落块、每块 400px，整页 660px → 一块一页，共 5 页
+    expect(screen.getByText('第 1 / 5 页')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /上一页/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /下一页/ })).toBeEnabled();
+  });
+
+  it('翻页按钮与 ←→ 方向键都能翻页，到末页停住不越界', async () => {
+    stubBlockLayout(400);
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+    fireEvent.click(screen.getByRole('button', { name: '分页' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /下一页/ }));
+    expect(screen.getByText('第 2 / 5 页')).toBeInTheDocument();
+
+    fireEvent.keyDown(paper, { key: 'ArrowRight' });
+    expect(screen.getByText('第 3 / 5 页')).toBeInTheDocument();
+
+    fireEvent.keyDown(paper, { key: 'ArrowLeft' });
+    expect(screen.getByText('第 2 / 5 页')).toBeInTheDocument();
+
+    for (let i = 0; i < 5; i += 1) {
+      fireEvent.click(screen.getByRole('button', { name: /下一页/ }));
+    }
+    expect(screen.getByText('第 5 / 5 页')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /下一页/ })).toBeDisabled();
+  });
+
+  it('分页模式下全部段落仍在 DOM 里：划词与锚点定位不受翻页影响', async () => {
+    stubBlockLayout(400);
+    renderApp(['/study/calc7/ch2']);
+    const paper = await screen.findByTestId('paper');
+
+    fireEvent.click(screen.getByRole('button', { name: '分页' }));
+
+    // 只裁切、不卸载——卸载了就没法划选「上一页」的原文，锚点也定位不到
+    expect(paper.querySelectorAll('[data-block-index]')).toHaveLength(5);
+    expect(document.getElementById('source-rate')).toBeInTheDocument();
+  });
+
+  it('锚点定位时先翻到它所在的那一页', async () => {
+    const user = userEvent.setup();
+    stubBlockLayout(400);
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+    fireEvent.click(screen.getByRole('button', { name: '分页' }));
+
+    // source-limit 在第 3 个段落块上（每块一页）→ 应翻到第 3 页
+    await user.click(screen.getByRole('button', { name: /定位教材：导数定义/ }));
+
+    expect(await screen.findByText('第 3 / 5 页')).toBeInTheDocument();
+    expect(document.getElementById('source-limit')).toHaveClass('focus');
+  });
+
+  it('切到分页会把阅读方式记在本地', async () => {
+    stubBlockLayout(400);
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+
+    fireEvent.click(screen.getByRole('button', { name: '分页' }));
+
+    expect(localStorage.getItem('ai_reader.viewMode')).toBe('page');
+  });
+
+  it('本地记着分页时，重新进入学习页直接就是分页', async () => {
+    stubBlockLayout(400);
+    localStorage.setItem('ai_reader.viewMode', 'page');
+
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+
+    expect(screen.getByRole('button', { name: '分页' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('第 1 / 5 页')).toBeInTheDocument();
   });
 });

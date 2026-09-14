@@ -107,6 +107,113 @@
   z-index: 8;
 }
 
+/* ---------- 章节导航与阅读方式（吸顶栏右侧） ---------- */
+.reader-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chapter-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-btn {
+  border: 1px solid var(--line);
+  background: #fffef9;
+  color: var(--ink);
+  font-size: 12px;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.nav-btn:hover:not(:disabled) {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chapter-select {
+  max-width: 180px;
+  border: 1px solid var(--line);
+  background: #fffef9;
+  font-size: 12px;
+  padding: 5px 6px;
+}
+
+.view-mode {
+  display: flex;
+  border: 1px solid var(--line);
+}
+
+.view-mode button {
+  border: 0;
+  background: #fffef9;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.view-mode button.active {
+  background: var(--green);
+  color: white;
+}
+
+.reader-intro {
+  max-width: 630px;
+  margin: 6px auto 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---------- 分页视图 ---------- */
+/* 外层裁成「一页高」，内层整体上移把当前页顶到最上面；段落始终挂载，
+   所以划词、锚点定位、可见性统计在两种阅读方式下完全一致。 */
+.paper.paginated .paper-body {
+  overflow: hidden;
+}
+
+.page-bar {
+  max-width: 630px;
+  margin: 0 auto;
+  padding: 4px 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.page-bar button {
+  border: 1px solid var(--line);
+  background: #fffef9;
+  color: var(--ink);
+  font-size: 13px;
+  padding: 7px 14px;
+}
+
+.page-bar button:hover:not(:disabled) {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.page-bar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page-count {
+  color: var(--muted);
+  font: 12px 'DM Mono';
+}
+
 /* ---------- 右栏：AI 讲解 ---------- */
 .coach {
   background: var(--card);
