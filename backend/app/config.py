@@ -21,6 +21,12 @@ class Settings:
         self.embedding_url = os.getenv("EMBEDDING_URL", "").rstrip("/")
         self.embedding_api_key = os.getenv("EMBEDDING_API_KEY", "")
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+        # 扫描件 OCR（可选）：依赖见 requirements-ocr.txt，未安装时自动降级
+        self.ocr_enabled = os.getenv("AI_READER_OCR", "on").strip().lower() not in ("0", "off", "false")
+        self.ocr_dpi = int(os.getenv("AI_READER_OCR_DPI", "200"))
+        #: ONNX 默认会用满所有核心；在 Web 服务里是坏邻居，这里显式收敛
+        self.ocr_threads = int(os.getenv("AI_READER_OCR_THREADS", "4"))
+        self.ocr_max_bytes = int(os.getenv("AI_READER_OCR_MAX_MB", "200")) * 1024 * 1024
 
     @property
     def llm_configured(self) -> bool:
@@ -29,6 +35,12 @@ class Settings:
     @property
     def embedding_configured(self) -> bool:
         return bool(self.embedding_url and self.embedding_api_key)
+
+    @property
+    def ocr_configured(self) -> bool:
+        """是否**打算**启用 OCR。注意这里不探测依赖包是否装了——
+        与 `embedding_configured` 同一口径：配置归配置，装没装由构造时兜住。"""
+        return self.ocr_enabled
 
 
 settings = Settings()

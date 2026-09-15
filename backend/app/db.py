@@ -98,6 +98,18 @@ CREATE TABLE IF NOT EXISTS thread_messages (
   detail TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ocr_tasks (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  filename TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  total_pages INTEGER NOT NULL DEFAULT 0,
+  done_pages INTEGER NOT NULL DEFAULT 0,
+  book_id TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(book_id, chapter_id);
 CREATE INDEX IF NOT EXISTS idx_progress_book ON chapter_progress(book_id);
@@ -130,6 +142,65 @@ class Database:
                 existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
                 if column not in existing:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+    #: `update_ocr_task` 允许改的字段。白名单而不是直接拼参数名：
+    #: 字段名要进 SQL 语句，必须挡住任意字符串。
+    _OCR_TASK_FIELDS = frozenset(
+        {"status", "total_pages", "done_pages", "book_id", "message", "title", "updated_at"}
+    )
+
+    def add_ocr_task(self, task: Dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO ocr_tasks"
+                "(id,status,filename,title,total_pages,done_pages,book_id,message,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    task["id"],
+                    task["status"],
+                    task.get("filename", ""),
+                    task.get("title", ""),
+                    task.get("total_pages", 0),
+                    task.get("done_pages", 0),
+                    task.get("book_id", ""),
+                    task.get("message", ""),
+                    task["created_at"],
+                    task["updated_at"],
+                ),
+            )
+
+    def get_ocr_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM ocr_tasks WHERE id=?", (task_id,)).fetchone()
+            return dict(row) if row else None
+
+    def update_ocr_task(self, task_id: str, **fields: Any) -> None:
+        """局部更新任务。字段名走白名单，避免拼 SQL 时被注入。"""
+        unknown = set(fields) - self._OCR_TASK_FIELDS
+        if unknown:
+            raise ValueError(f"未知的 ocr_tasks 字段：{sorted(unknown)}")
+        if not fields:
+            return
+        assignments = ", ".join(f"{name}=?" for name in fields)
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE ocr_tasks SET {assignments} WHERE id=?",
+                (*fields.values(), task_id),
+            )
+
+    def fail_stale_ocr_tasks(self, reason: str) -> int:
+        """把还停在 pending/running 的任务标为失败，返回处理了几条。
+
+        进程重启（含 `--reload`）会连带杀掉跑 OCR 的线程，但任务行还留在库里。
+        启动时对一次账，让前端看到诚实的「已中断，请重新上传」，而不是永远转圈。
+        """
+        with self.connect() as conn:
+            cur = conn.execute(
+                "UPDATE ocr_tasks SET status='failed', message=?, updated_at=? "
+                "WHERE status IN ('pending','running')",
+                (reason, _now()),
+            )
+            return cur.rowcount
 
     def backfill_content_warning(self, warning_of) -> int:
         """给升级前入库、还没写过提示的教材补一次；返回补了几本。

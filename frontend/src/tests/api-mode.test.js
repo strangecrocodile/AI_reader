@@ -30,7 +30,11 @@ describe('api 后端模式（REST）', () => {
     vi.stubGlobal('fetch', fetchMock);
     const file = new File(['%PDF-demo'], 'new.pdf', { type: 'application/pdf' });
 
-    await expect(api.uploadBook(file)).resolves.toMatchObject({ id: 'b2' });
+    // 201（常规解析）走 book 分支，调用方拿到的就是教材元信息
+    await expect(api.uploadBook(file)).resolves.toEqual({
+      kind: 'book',
+      book: { id: 'b2', title: '新教材', chapters: [] },
+    });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://backend.test/api/books');
@@ -188,6 +192,49 @@ describe('api 后端模式（REST）', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://backend.test/api/threads/th-1', {
       method: 'DELETE',
     });
+  });
+
+  it('扫描件上传返回 202 时给出 ocr 分支（此时还没有教材）', async () => {
+    configureApiBase('http://backend.test');
+    const task = { id: 't1', status: 'pending', totalPages: 300, donePages: 0 };
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 202,
+      json: async () => ({ task }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const file = new File(['%PDF-scan'], 'scan.pdf', { type: 'application/pdf' });
+
+    await expect(api.uploadBook(file)).resolves.toEqual({ kind: 'ocr', task });
+  });
+
+  it('fetchOcrTask 轮询任务进度', async () => {
+    configureApiBase('http://backend.test');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 't1', status: 'running', donePages: 12, totalPages: 300 }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.fetchOcrTask('t1')).resolves.toMatchObject({ donePages: 12 });
+    expect(fetchMock).toHaveBeenCalledWith('http://backend.test/api/ocr/tasks/t1');
+  });
+
+  it('任务不存在（404）返回 null，网络故障照常抛出', async () => {
+    configureApiBase('http://backend.test');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));
+    // 404 是「任务没了」，调用方据此提示重新上传
+    await expect(api.fetchOcrTask('gone')).resolves.toBeNull();
+
+    // 断网不能跟 404 混为一谈：那样一次网络抖动就会被误报成「识别已中断」
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    await expect(api.fetchOcrTask('t1')).rejects.toThrow();
   });
 
   it('未配置后端时维持演示模式（不发起网络请求）', async () => {

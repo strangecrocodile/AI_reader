@@ -9,7 +9,7 @@
 AI_reader/
 ├── docs/              # 赛题要求、产品设计、后端设计、下一阶段开发文档
 ├── frontend/          # React 19 + Vite 8 前端（主页 / 学习页 / 知识地图）
-├── backend/           # FastAPI 后端（PDF/Word/文本解析 · RAG 检索 · 溯源问答 · 知识图谱）
+├── backend/           # FastAPI 后端（PDF/Word/文本解析 · 扫描件 OCR · RAG 检索 · 溯源问答 · 知识图谱）
 └── tools/kb-agent/    # 教材入库 Agent 原型（.docx → 章节 Word + RAG 知识库，独立组件）
 ```
 
@@ -24,7 +24,8 @@ AI_reader/
 | Node.js | `^20.19` 或 `>=22.12`（开发使用 24） | 运行 `frontend`，下限由 Vite 8 决定 |
 | npm | 随 Node.js 安装 | 安装前端依赖 |
 
-不需要 GPU。**不配置任何模型 Key 也能跑通完整演示**（后端自动规则回退，前端可用内置演示数据）。
+不需要 GPU，扫描件 OCR 也是纯 CPU 跑的。**不配置任何模型 Key 也能跑通完整演示**
+（后端自动规则回退，前端可用内置演示数据）。
 
 ---
 
@@ -53,6 +54,18 @@ LLM_MODEL=deepseek-chat
 ```
 
 > 不填 `LLM_API_KEY` 时后端使用规则 mock 回退，完整链路照样能演示。
+
+**可选：让扫描件 PDF 也能导入（OCR）。** 不装的话其它格式完全不受影响，只是上传扫描件时
+后端会返回一条带安装指引的提示：
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-ocr.txt
+```
+
+这条依赖（`rapidocr` + `onnxruntime`）刻意**不放进 `requirements.txt`**：它有 100 MB 上下，
+而「不装模型、不配 Key 就能跑通演示」是本项目的核心卖点，不该被一个可选功能拖累。
+装好后模型随 wheel 一起到位，**首次识别也不联网**。识别是纯 CPU 的，一本 300 页的扫描教材
+大约十几分钟，期间可以在页面上正常做别的。
 
 ### 2. 前端（主产品，必需）
 
@@ -131,11 +144,11 @@ $env:PYTHONPATH = 'src'
 提交改动前，请确保相关套件全部通过。测试均不依赖模型 Key，也不访问外网。
 
 ```powershell
-# 后端：135 项
+# 后端：172 项
 cd backend
 .venv\Scripts\python.exe -m pytest
 
-# 前端：108 项
+# 前端：118 项
 cd frontend
 npm test
 
@@ -153,6 +166,8 @@ cd tools\kb-agent
 | 启动后端（热重载） | `.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000` |
 | 换端口启动后端 | `.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8001` |
 | 重新生成示例教材（PDF） | `.venv\Scripts\python.exe scripts\make_demo_pdf.py` |
+| 安装扫描件 OCR 依赖（可选） | `.venv\Scripts\python.exe -m pip install -r requirements-ocr.txt` |
+| 导出教材 Markdown | `curl http://localhost:8000/api/books/<id>/markdown -o book.md` |
 | 跑后端测试 | `.venv\Scripts\python.exe -m pytest` |
 | 启动前端开发服务器 | `npm run dev` |
 | 跑前端测试 | `npm test` |
@@ -168,6 +183,7 @@ cd tools\kb-agent
 1. 打开 http://localhost:3000 —— 主页展示从后端加载的教材与学习路径；
 2. 点击「更换教材」→「上传」，导入 **PDF / Word(.docx) / 纯文本(.txt/.md)** 教材
    （PDF 带目录书签、Word 带标题样式时章节识别最准；`.doc` 请先另存为 `.docx`）；
+   **扫描件 PDF** 会自动走 OCR 异步识别，弹窗里显示逐页进度，识别完直接出现在书架；
 3. 进入章节 —— 左栏教材原文、右栏 AI 讲解。原文区顶部有**章节导航**（上一章 / 目录下拉 /
    下一章），读完一章直接翻下一章；右上角可切换**阅读方式**：
    「滚动」整章连着看，「分页」按教材段落高度一页页翻（翻页按钮或 ← → 方向键），
@@ -211,14 +227,27 @@ cd tools\kb-agent
 **知识地图为空或提示不可用？**
 知识地图由章节原文抽取出的知识点聚合而来，需要先有一次教材成功入库。确认已执行 `scripts\make_demo_pdf.py`，或先在主页上传一本教材。
 
-**上传 `.doc` 或扫描件 PDF 报错？**
-`.doc`（旧版二进制 Word）不支持，请用 Word 另存为 `.docx`；扫描件 PDF 没有文本层，属于产品范围之外（见 `docs\产品设计文档.md` 第 6 节）。
+**上传 `.doc` 报错？**
+`.doc`（旧版二进制 Word）不支持，请用 Word 另存为 `.docx`。
+
+**上传扫描件 PDF 后一直在识别？**
+扫描件没有文本层，后端会自动转成 OCR 异步任务（进度条在「更换教材」弹窗里）。
+一本 300 页的教材大约十几分钟，识别期间可以关掉弹窗继续学习，完成后会提示你。
+没装 OCR 依赖时不会静默失败，而是给出一条带 `pip install -r requirements-ocr.txt` 的提示。
+
+**识别到一半会不会先入库半本书？**
+不会，**全有或全无**：识别中途出错时一行都不写库，任务标为失败并说明跑到第几页。
+半本书入库会让溯源指向不存在的原文，比没有更糟。
+
+**识别途中改了后端代码（`--reload` 重启）？**
+识别线程随进程结束，任务会被对账标记为「已中断，请重新上传」。这一版不支持断点续跑，
+但会如实告诉你，不会一直转圈。
 
 **上传后提示「内容可能没被完整读取」？**
 解析器读不全这本教材，提示里会写清**跳过了什么**。最常见的是正文写在 **Word 表格 /
 文本框 / 图片**里——这些地方的文字 `doc.paragraphs` 读不到，整本书就只剩几百字。
-把内容改成普通段落（章节用「标题 1 / 标题 2」样式）后重新上传最稳；PDF 同理，
-扫描件没有文本层，建议另存为 `.md` / `.txt` 或换成文字版 PDF。
+把内容改成普通段落（章节用「标题 1 / 标题 2」样式）后重新上传最稳；PDF 同理。
+**整本是扫描图片的 PDF 不走这条路径**——它会自动转去 OCR，看不到这个提示。
 提示随教材存进数据库，重开「更换教材」弹窗仍能在对应教材上看到标记。
 
 **掌握度是怎么算的？**

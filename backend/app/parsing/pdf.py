@@ -5,10 +5,13 @@
 2. 无书签 → 通过字号/粗细启发式检测章节标题。
 
 输出 ParsedBook：章节 → 段落（含页码），段落为最小「锚点」粒度。
-仅处理文本型 PDF；扫描件/OCR 不在范围内（见产品设计文档）。
+
+这里只处理**文本型** PDF。扫描件没有文本层，解析出来会是一本空书，所以由
+`probe_pdf` 先判定、再由路由层转给 OCR（`parsing/ocr_pdf.py`），本模块不参与。
 """
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from .base import (
@@ -178,6 +181,50 @@ def _detect_heading_y(page, body_size: float) -> dict:
     return result
 
 
+@dataclass
+class PdfProbe:
+    """上传前的廉价体检结果，用来决定这本 PDF 该走哪条解析路径。"""
+
+    pages: int
+    chars_per_page: float
+    scanned: bool
+
+
+def probe_pdf(data: bytes, sample_pages: int = 12) -> Optional[PdfProbe]:
+    """廉价判定是否为扫描件：只抽样若干页统计文本量，成本与书长无关。
+
+    为什么抽样而不是全量：扫描件与文字版的差距是「约 0 字/页」对「上千字/页」，
+    十几页样本就足够决定性；而全量解析一本 400 页的书要读每一页的 span，很浪费——
+    这笔开销会落在每一次上传上，包括本该走正常路径的文字版 PDF。
+
+    局限（有意接受）：
+    - 图文混排的 PDF（部分页有文本层）会被抽样平均判为文字版，维持现有行为；
+    - 若扫描件本身带了隐藏文本层，这里判为文字版——但它本来就能正常解析，结果是对的。
+
+    打不开或非 PDF 返回 None，交给正常解析路径去报错。
+    """
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception:
+        return None
+    try:
+        n_pages = doc.page_count
+        if n_pages == 0:
+            return None
+        step = max(1, n_pages // sample_pages)
+        pages = list(range(0, n_pages, step))[:sample_pages]
+        chars = sum(len(doc[i].get_text("text").strip()) for i in pages)
+        per_page = chars / len(pages)
+        return PdfProbe(
+            pages=n_pages,
+            chars_per_page=per_page,
+            # 与 parse_pdf_stream 用同一个阈值，保持「扫描件」定义只有一个
+            scanned=n_pages >= 3 and per_page < SPARSE_CHARS_PER_PAGE,
+        )
+    finally:
+        doc.close()
+
+
 def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> ParsedBook:
     doc = fitz.open(stream=data, filetype="pdf")
     try:
@@ -235,8 +282,9 @@ def parse_pdf_stream(data: bytes, default_title: str = "未命名教材") -> Par
         page_texts = [doc[i].get_text("text") for i in range(n_pages)]
         total_chars = sum(len(t.strip()) for t in page_texts)
         if n_pages >= 3 and total_chars / n_pages < SPARSE_CHARS_PER_PAGE:
+            # 只说事实，不给结论：能不能走 OCR 由路由层决定（那里才知道 OCR 是否可用）
             notes.append(
-                "PDF 几乎提取不到文字，可能是扫描件或图片版（没有文本层），这类文件无法用于检索问答"
+                "PDF 几乎提取不到文字，可能是扫描件或图片版（没有文本层）"
             )
         first_page_head = next(
             (ln.strip() for ln in page_texts[0].splitlines() if ln.strip() and not re.fullmatch(r"[\d\s\-—.]+", ln.strip())),

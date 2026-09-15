@@ -81,7 +81,7 @@ describe('主页', () => {
       .spyOn(api, 'fetchBooks')
       .mockResolvedValueOnce(mockBooks)
       .mockResolvedValueOnce([...mockBooks, uploaded]);
-    const uploadBook = vi.spyOn(api, 'uploadBook').mockResolvedValue(uploaded);
+    const uploadBook = vi.spyOn(api, 'uploadBook').mockResolvedValue({ kind: 'book', book: uploaded });
     const user = userEvent.setup();
 
     renderApp();
@@ -112,7 +112,7 @@ describe('主页', () => {
       .spyOn(api, 'fetchBooks')
       .mockResolvedValueOnce(mockBooks)
       .mockResolvedValueOnce([...mockBooks, uploaded]);
-    vi.spyOn(api, 'uploadBook').mockResolvedValue(uploaded);
+    vi.spyOn(api, 'uploadBook').mockResolvedValue({ kind: 'book', book: uploaded });
 
     const user = userEvent.setup();
     renderApp();
@@ -153,7 +153,9 @@ describe('主页', () => {
       .spyOn(api, 'fetchBooks')
       .mockResolvedValueOnce(mockBooks)
       .mockResolvedValueOnce([...mockBooks, uploaded]);
-    const uploadBook = vi.spyOn(api, 'uploadBook').mockResolvedValue(uploaded);
+    const uploadBook = vi
+      .spyOn(api, 'uploadBook')
+      .mockResolvedValue({ kind: 'book', book: uploaded });
     const user = userEvent.setup();
 
     renderApp();

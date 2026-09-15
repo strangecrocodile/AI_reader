@@ -351,6 +351,54 @@
   font-size: 12px;
 }
 
+/* 扫描件 OCR 的进度块。跟 .upload-warning 同一位置、同一套语气，
+   但用绿色系——它是正常进行中的事，不是需要补救的问题。 */
+.upload-progress {
+  margin-top: 18px;
+  padding: 16px 18px;
+  background: #f4f8f0;
+  border-left: 4px solid var(--green);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.upload-progress b {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.upload-progress progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: #dde7d4;
+  appearance: none;
+}
+
+.upload-progress progress::-webkit-progress-bar {
+  background: #dde7d4;
+  border-radius: 4px;
+}
+
+.upload-progress progress::-webkit-progress-value {
+  background: var(--green);
+  border-radius: 4px;
+}
+
+.upload-progress progress::-moz-progress-bar {
+  background: var(--green);
+  border-radius: 4px;
+}
+
+.upload-progress-tip {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .warning-ok {
   border: 0;
   background: var(--ink);

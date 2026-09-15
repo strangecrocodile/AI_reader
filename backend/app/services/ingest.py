@@ -21,6 +21,19 @@ TEXT = "text"
 SUPPORTED_MESSAGE = "目前支持 PDF / Word(.docx) / 纯文本(.txt/.md) 教材；.doc 请先另存为 .docx"
 _TEXT_SUFFIXES = (".txt", ".md", ".markdown")
 
+#: 教材 `note` 字段里 OCR 来源的写法
+OCR_SOURCE_NOTE = "扫描件 OCR"
+#: 认出是扫描件但 OCR 不可用时的提示。必须给**下一步怎么做**，不能只说「识别不了」——
+#: 用户看到「内容可能没被完整读取」时最需要的是能自己走的出口。
+SCANNED_NO_OCR_MESSAGE = (
+    "这本 PDF 是扫描件（没有文本层），需要 OCR 才能读取。"
+    "服务端未启用扫描件识别，请让管理员执行 pip install -r requirements-ocr.txt 后重启；"
+    "或者用带文本层的 PDF / Word / txt 重新上传"
+)
+#: 上传体积上限。当前主要拦扫描件——一页 200dpi 的图就要几百 KB，
+#: 而 OCR 耗时与页数成正比，超大文件会长时间占住 worker。
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
 #: 正文总字数低于这个数就提示「内容可能没读全」。
 #: 阈值取值有依据：团队自己的样例教材（kb-agent 的 `sample_book.docx`）正文只有 523 字，
 #: 是合法可用的薄教材，不能被误报；而「正文全在表格 / 文本框里」的文档解析出来是 433 字。
@@ -66,11 +79,14 @@ def low_content_warning(chars: int) -> str:
     return f"整本教材只解析出 {chars} 个字的正文，内容可能大部分没被读出来"
 
 
-def content_warning_of(parsed) -> str:
+def content_warning_of(parsed, extra_notes: Optional[List[str]] = None) -> str:
     """汇总「内容可能没被完整读取」的提示；一切正常时返回空串。
 
     两类信号合起来用：正文总字数低到不正常（用户能直接感知到的症状），
     以及解析器报告的**跳过了什么**（表格 / 文本框 / 图片，是根因）。
+
+    `extra_notes` 给 OCR 路径补一句「这本是识别出来的」——它不属于 `ParsedBook.notes`
+    （那是解析器的自述），但同样要显示在同一个提示位。
     """
     chars = sum(
         len(section.text)
@@ -81,7 +97,8 @@ def content_warning_of(parsed) -> str:
     symptom = low_content_warning(chars)
     notes: List[str] = [symptom] if symptom else []
     notes.extend(parsed.notes or [])
-    return "；".join(notes)
+    notes.extend(extra_notes or [])
+    return "；".join(n for n in notes if n)
 
 
 def backfill_content_warnings(db: Database) -> int:
@@ -89,19 +106,21 @@ def backfill_content_warnings(db: Database) -> int:
     return db.backfill_content_warning(low_content_warning)
 
 
-def ingest_file_bytes(
+def store_parsed_book(
     db: Database,
-    file_bytes: bytes,
-    filename: str = "",
-    content_type: str = "",
+    parsed,
+    note: str,
     default_title: str = "未命名教材",
+    extra_notes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """解析并入库任意受支持格式，返回教材元信息（含章节）。"""
-    fmt = detect_format(filename, content_type)
-    if fmt is None:
-        raise ValueError(SUPPORTED_MESSAGE)
+    """把已解析好的 ParsedBook 写进库，返回教材元信息（含章节）。
 
-    parsed = parse_bytes(fmt, file_bytes, default_title)
+    与解析完全解耦，因为 OCR 路径要复用：扫描件的文字来源不同，但落库之后
+    章节/段落/锚点的形状一模一样，下游检索与溯源不需要知道它是扫出来的。
+
+    整本写入是一个事务（`add_book_bundle`），所以**不存在「写了一半」的教材**——
+    OCR 中途失败时一行都不落库，正是靠这里兜住。
+    """
     if not parsed.chapters:
         raise ValueError("未能从文件中识别出章节内容")
 
@@ -110,9 +129,9 @@ def ingest_file_bytes(
         "id": book_id,
         "title": parsed.title or default_title,
         "author": "",
-        "note": f"来源格式：{fmt}",
+        "note": f"来源格式：{note}",
         "progress_pct": 0.0,
-        "content_warning": content_warning_of(parsed),
+        "content_warning": content_warning_of(parsed, extra_notes=extra_notes),
         "created_at": _now(),
     }
 
@@ -160,10 +179,25 @@ def ingest_file_bytes(
     return {
         "id": book_id,
         "title": parsed.title,
-        "format": fmt,
         "contentWarning": book_row["content_warning"],
         "chapters": chapter_rows,
     }
+
+
+def ingest_file_bytes(
+    db: Database,
+    file_bytes: bytes,
+    filename: str = "",
+    content_type: str = "",
+    default_title: str = "未命名教材",
+) -> Dict[str, Any]:
+    """解析并入库任意受支持格式，返回教材元信息（含章节）。"""
+    fmt = detect_format(filename, content_type)
+    if fmt is None:
+        raise ValueError(SUPPORTED_MESSAGE)
+
+    parsed = parse_bytes(fmt, file_bytes, default_title)
+    return store_parsed_book(db, parsed, note=fmt, default_title=default_title)
 
 
 def _now() -> str:
