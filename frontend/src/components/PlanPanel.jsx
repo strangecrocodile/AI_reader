@@ -25,15 +25,19 @@ export default function PlanPanel({ book }) {
         </div>
         <span className="book-tag">{book.tag}</span>
       </div>
-      <div className="goal-card">
-        <div className="goal-label">{plan.goalLabel}</div>
-        <strong>{plan.goal}</strong>
-        <p>{plan.remaining}</p>
+      <div className="plan-body">
+        <div className="goal-card">
+          <div className="goal-label">{plan.goalLabel}</div>
+          <strong>{plan.goal}</strong>
+          <p>{plan.remaining}</p>
+        </div>
+        <button className="start-btn" onClick={startStudy}>
+          开启今日学习
+        </button>
       </div>
-      <button className="start-btn" onClick={startStudy}>
-        开启今日学习　→
-      </button>
-      <ChapterList book={book} onAdjust={() => toast('已为你重新规划本周进度')} />
+      <div className="chapter-dock">
+        <ChapterList book={book} onAdjust={() => toast('已为你重新规划本周进度')} />
+      </div>
     </div>
   );
 }

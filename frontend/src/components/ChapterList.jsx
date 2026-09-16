@@ -11,7 +11,7 @@ export default function ChapterList({ book, onAdjust }) {
   return (
     <>
       <div className="section-title">
-        <h3>章节目录</h3>
+        <h3>学习轨道</h3>
         <button onClick={onAdjust}>调整计划</button>
       </div>
       {book.chapters.map((chapter) => (

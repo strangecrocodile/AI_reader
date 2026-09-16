@@ -67,6 +67,10 @@ describe('主页', () => {
     expect(screen.getByText('正在加载教材…')).toBeInTheDocument();
 
     await screen.findByText('正在学习的教材');
+    expect(screen.getByTestId('home-shell')).toBeInTheDocument();
+    expect(screen.getByText('学习轨道')).toBeInTheDocument();
+    expect(screen.getByText('当前进度')).toBeInTheDocument();
+    expect(screen.getByText('今日焦点')).toBeInTheDocument();
     expect(screen.getByTestId('book-progress')).toHaveTextContent('18% 已完成');
     expect(screen.getByTestId('book-cover')).toHaveTextContent('高等数学');
     expect(screen.getByText('从变化率，')).toBeInTheDocument();

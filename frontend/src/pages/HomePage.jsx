@@ -2,6 +2,7 @@ import { useState } from 'react';
 import BookCard from '../components/BookCard.jsx';
 import PlanPanel from '../components/PlanPanel.jsx';
 import BookModal from '../components/BookModal.jsx';
+import SpatialBackdrop from '../components/SpatialBackdrop.jsx';
 import StateCard from '../components/StateCard.jsx';
 import { useBooks } from '../state/BookContext.jsx';
 
@@ -48,10 +49,31 @@ export default function HomePage() {
   }
 
   const book = books.find((b) => b.id === currentBookId) ?? books[0];
+  const todayChapter = book.chapters.find((chapter) => chapter.isToday) ?? book.chapters[0];
 
   return (
-    <section className="page active">
-      <div className="home-grid">
+    <section className="page active home-page">
+      <SpatialBackdrop />
+      <div className="home-shell" data-testid="home-shell">
+        <aside className="home-command" aria-label="学习概览">
+          <div className="command-card command-card-primary">
+            <span className="eyebrow">AI Reader</span>
+            <h2>把教材压成今天能完成的学习轨道。</h2>
+            <p className="sub">{book.plan.sub}</p>
+          </div>
+          <div className="command-stack">
+            <div className="metric-tile">
+              <span>当前进度</span>
+              <strong>{book.progressText}</strong>
+            </div>
+            <div className="metric-tile">
+              <span>今日焦点</span>
+              <strong>
+                {todayChapter ? `${todayChapter.num} · ${todayChapter.title}` : '等待计划生成'}
+              </strong>
+            </div>
+          </div>
+        </aside>
         <BookCard book={book} onSwap={() => setModalOpen(true)} />
         <PlanPanel book={book} />
       </div>

@@ -1,23 +1,110 @@
 /* ---------- 主页工作台 ---------- */
-.home-grid {
+.home-page {
+  position: relative;
+  overflow: hidden;
+  min-height: calc(100vh - 72px);
+}
+
+.spatial-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.86;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 88%);
+}
+
+.spatial-backdrop canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.home-shell {
+  position: relative;
+  z-index: 1;
   display: grid;
-  grid-template-columns: minmax(320px, 0.86fr) minmax(0, 1.34fr);
-  gap: clamp(18px, 3vw, 30px);
-  max-width: 1380px;
+  grid-template-columns: minmax(220px, 0.58fr) minmax(300px, 0.88fr) minmax(420px, 1.24fr);
+  gap: clamp(16px, 2.4vw, 28px);
+  max-width: 1500px;
   margin: auto;
   align-items: stretch;
 }
 
+.home-command {
+  display: grid;
+  align-content: stretch;
+  gap: 14px;
+}
+
+.command-card,
+.metric-tile {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: var(--radius);
+  background: var(--glass);
+  box-shadow: var(--shadow-depth);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+
+.command-card {
+  padding: clamp(20px, 2.6vw, 28px);
+  min-height: 310px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.command-card h2 {
+  margin-top: 14px;
+  font-size: clamp(24px, 2.2vw, 32px);
+  line-height: 1.14;
+  text-wrap: pretty;
+}
+
+.command-card .sub {
+  font-size: 14px;
+}
+
+.command-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.metric-tile {
+  min-height: 124px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.metric-tile span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.metric-tile strong {
+  color: var(--ink);
+  font-size: 19px;
+  line-height: 1.25;
+  text-wrap: pretty;
+}
+
 /* ---------- 教材状态卡 ---------- */
 .book-stage {
-  min-height: 640px;
+  min-height: 680px;
   padding: clamp(22px, 3vw, 34px);
-  border: 1px solid var(--line);
+  border: 1px solid rgba(255, 255, 255, 0.76);
   border-radius: var(--radius);
   background:
-    linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.68)),
-    radial-gradient(circle at 78% 14%, rgba(0, 122, 255, 0.16), transparent 18rem);
-  box-shadow: var(--shadow-card);
+    linear-gradient(160deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.48)),
+    radial-gradient(circle at 78% 14%, rgba(0, 122, 255, 0.2), transparent 18rem),
+    radial-gradient(circle at 22% 88%, rgba(52, 199, 89, 0.12), transparent 16rem);
+  box-shadow: var(--shadow-depth);
+  backdrop-filter: blur(28px) saturate(170%);
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
   position: relative;
   overflow: hidden;
   display: flex;
@@ -35,18 +122,18 @@
 .book-stage:before {
   inset: 0;
   background-image:
-    linear-gradient(rgba(29, 29, 31, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(29, 29, 31, 0.04) 1px, transparent 1px);
-  background-size: 44px 44px;
+    linear-gradient(rgba(29, 29, 31, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29, 29, 31, 0.035) 1px, transparent 1px);
+  background-size: 38px 38px;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.75), transparent 70%);
 }
 
 .book-stage:after {
-  width: 220px;
-  height: 220px;
-  right: -80px;
-  bottom: -80px;
-  border: 1px solid rgba(0, 102, 204, 0.16);
+  width: 260px;
+  height: 260px;
+  right: -100px;
+  bottom: -92px;
+  border: 1px solid rgba(0, 102, 204, 0.18);
   border-radius: 50%;
 }
 
@@ -69,6 +156,42 @@
   font-weight: 700;
 }
 
+.book-orbit {
+  position: absolute;
+  inset: 100px 24px 104px;
+  z-index: 0;
+  pointer-events: none;
+  border: 1px solid rgba(0, 102, 204, 0.1);
+  border-radius: 50%;
+  transform: rotate(-16deg);
+}
+
+.book-orbit span {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #007aff;
+  box-shadow: 0 0 0 8px rgba(0, 122, 255, 0.1);
+}
+
+.book-orbit span:first-child {
+  left: 16%;
+  top: 18%;
+}
+
+.book-orbit span:last-child {
+  right: 18%;
+  bottom: 20%;
+  background: #34c759;
+  box-shadow: 0 0 0 8px rgba(52, 199, 89, 0.12);
+}
+
+.book-object-wrap {
+  align-self: center;
+  perspective: 1200px;
+}
+
 .book-object {
   align-self: center;
   width: min(310px, 78vw);
@@ -78,12 +201,19 @@
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96)),
     linear-gradient(90deg, rgba(0, 102, 204, 0.16), transparent 24px);
-  box-shadow: 0 32px 70px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 34px 80px rgba(25, 30, 42, 0.18), -18px 22px 46px rgba(0, 122, 255, 0.1);
   padding: 28px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  transform: translateY(4px);
+  transform: rotateX(4deg) rotateY(-10deg) translateY(4px);
+  transform-style: preserve-3d;
+  transition: transform 0.28s ease, box-shadow 0.28s ease;
+}
+
+.book-stage:hover .book-object {
+  transform: rotateX(2deg) rotateY(-6deg) translateY(-2px);
+  box-shadow: 0 40px 92px rgba(25, 30, 42, 0.2), -18px 22px 46px rgba(0, 122, 255, 0.12);
 }
 
 .book-object .tiny {
@@ -107,8 +237,8 @@
 }
 
 .book-actions {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -145,11 +275,15 @@
 
 /* ---------- 学习计划面板 ---------- */
 .plan-panel {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(255, 255, 255, 0.76);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.8);
-  box-shadow: var(--shadow-card);
-  padding: clamp(24px, 3.8vw, 44px);
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: var(--shadow-depth);
+  padding: clamp(22px, 3.2vw, 38px);
+  backdrop-filter: blur(26px) saturate(170%);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+  display: flex;
+  flex-direction: column;
 }
 
 .plan-head {
@@ -159,8 +293,13 @@
   gap: 22px;
 }
 
+.plan-panel h1 {
+  font-size: clamp(38px, 4.2vw, 56px);
+  line-height: 1.02;
+}
+
 .book-tag {
-  background: var(--soft);
+  background: rgba(255, 255, 255, 0.76);
   color: var(--green);
   border: 1px solid rgba(0, 102, 204, 0.16);
   border-radius: 999px;
@@ -171,12 +310,16 @@
 }
 
 .goal-card {
-  margin: 30px 0 22px;
+  margin: 26px 0 16px;
   padding: 20px 22px;
   border: 1px solid rgba(0, 102, 204, 0.18);
   border-radius: var(--radius);
   background: linear-gradient(135deg, rgba(0, 102, 204, 0.1), rgba(100, 210, 255, 0.12));
   color: var(--ink);
+}
+
+.plan-body {
+  display: grid;
 }
 
 .goal-card p {
@@ -219,6 +362,14 @@
   margin-bottom: 10px;
 }
 
+.chapter-dock {
+  margin-top: 24px;
+  border: 1px solid rgba(29, 29, 31, 0.08);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.5);
+  padding: 14px 18px 6px;
+}
+
 .section-title button {
   min-height: 36px;
   border: 0;
@@ -239,12 +390,14 @@
   background: none;
   text-align: left;
   color: inherit;
-  transition: color 0.2s, transform 0.2s;
+  border-radius: 6px;
+  transition: color 0.2s, transform 0.2s, background 0.2s;
 }
 
 .chapter:hover {
   color: var(--green);
   transform: translateX(2px);
+  background: rgba(0, 102, 204, 0.04);
 }
 
 .chapter-num {
@@ -508,16 +661,28 @@
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 980px) {
-  .home-grid {
+  .home-shell {
     grid-template-columns: 1fr;
   }
 
   .book-stage {
     min-height: 520px;
   }
+
+  .home-command {
+    grid-template-columns: 1fr;
+  }
+
+  .command-card {
+    min-height: auto;
+  }
 }
 
 @media (max-width: 620px) {
+  .home-page {
+    overflow: visible;
+  }
+
   .plan-head {
     grid-template-columns: 1fr;
   }
@@ -528,10 +693,19 @@
 
   .book-object {
     min-height: 360px;
+    transform: none;
   }
 
   .book-title {
     font-size: 27px;
+  }
+
+  .book-actions {
+    display: grid;
+  }
+
+  .chapter-dock {
+    padding: 12px 12px 4px;
   }
 
   .modal-card {

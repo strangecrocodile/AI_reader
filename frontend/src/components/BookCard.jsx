@@ -15,27 +15,33 @@ export default function BookCard({ book, onSwap }) {
         <span>正在学习的教材</span>
         <span data-testid="book-progress">{progressText}</span>
       </div>
-      <div className="book-object" data-testid="book-cover" aria-label={`${book.title} ${book.edition}`}>
-        <div className="tiny">{cover.series}</div>
-        <div className="book-title">
-          {cover.lines.map((line) => (
-            <div key={line}>{line}</div>
-          ))}
+      <div className="book-orbit" aria-hidden="true">
+        <span></span>
+        <span></span>
+      </div>
+      <div className="book-object-wrap">
+        <div className="book-object" data-testid="book-cover" aria-label={`${book.title} ${book.edition}`}>
+          <div className="tiny">{cover.series}</div>
+          <div className="book-title">
+            {cover.lines.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+          <div className="formula">
+            {cover.formula.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+          <div className="tiny">{cover.footer}</div>
         </div>
-        <div className="formula">
-          {cover.formula.map((line) => (
-            <div key={line}>{line}</div>
-          ))}
-        </div>
-        <div className="tiny">{cover.footer}</div>
       </div>
       <div className="book-actions">
         <button className="switch-book" onClick={onSwap}>
-          更换教材　↗
+          更换教材
         </button>
         {sourceUrl ? (
           <a className="download-source" href={sourceUrl} download>
-            下载原文件　↓
+            下载原文件
           </a>
         ) : null}
       </div>
