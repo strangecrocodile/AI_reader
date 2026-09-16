@@ -388,7 +388,7 @@ export default function StudyPage() {
 
   return (
     <section className="page study">
-      <div className="mobile-warning">为便于演示「原文—讲解」联动，请在桌面宽度下体验完整界面。</div>
+      <div className="mobile-warning">窄屏下先阅读教材原文，AI 讲解与提问区在原文下方。</div>
       <div className="study-layout">
         <Reader
           content={content}
