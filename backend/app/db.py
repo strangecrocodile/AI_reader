@@ -294,7 +294,37 @@ class Database:
             return dict(row) if row else None
 
     def delete_book(self, book_id: str) -> None:
+        """删掉一本教材及其**全部**下游数据，单事务。
+
+        为什么不直接 `DELETE FROM books` 靠外键级联：`PRAGMA foreign_keys = ON`
+        只对有外键约束的子表生效，而 `sections` / `anchors` / `explanations` /
+        `plans` 这四张表**没有**指向 books 的外键。级联删不掉它们，一本 231 页的
+        扫描件教材就会留下约 4000 条段落 + 4000 条锚点，外加 LLM 生成的讲解与
+        学习计划大字段——删了书库文件却不变小，很难解释。所以这里逐表显式删。
+
+        `ocr_tasks` **刻意不动**：它是只增的任务日志，`book_id` 只是记录「这次
+        识别产出了哪本书」。删掉会丢掉这份历史，而那个悬空字符串没有任何代码会
+        join 它。这是有意为之，不是漏了。
+        """
         with self.connect() as conn:
+            # 先删孙子表：thread_messages 靠 threads 级联，但显式写出来更清楚
+            conn.execute(
+                "DELETE FROM thread_messages WHERE thread_id IN "
+                "(SELECT id FROM threads WHERE book_id=?)",
+                (book_id,),
+            )
+            for table in (
+                "threads",
+                "learning_events",
+                "concepts",
+                "chapter_progress",
+                "chapters",
+                "sections",
+                "anchors",
+                "explanations",
+                "plans",
+            ):
+                conn.execute(f"DELETE FROM {table} WHERE book_id=?", (book_id,))
             conn.execute("DELETE FROM books WHERE id=?", (book_id,))
 
     def set_progress(self, book_id: str, pct: float) -> None:

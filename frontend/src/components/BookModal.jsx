@@ -22,10 +22,79 @@ const WARNING_TIP =
 const OCR_FAIL_TIP =
   '识别到一半的教材不会入库——半本书的溯源会指向不存在的原文，比没有更糟。请重新上传；若反复失败，可以先用 .md / .txt 版本。';
 
-/** 轮询间隔。后端每识别一页就写一次库，1.5 秒足够跟手，又不至于把 SQLite 敲出火星。 */
-const OCR_POLL_INTERVAL = 1500;
-/** 兜底上限。几百页的书也就十几分钟，45 分钟到这儿基本是出事了——无限转圈比停下来更糟。 */
-const OCR_POLL_TIMEOUT = 45 * 60 * 1000;
+/**
+ * 轮询的各项时限。
+ *
+ * 打包成一个**可以改**的对象，纯粹是为了测试：15 分钟的卡死检测没法真等，
+ * 也没法用假时钟（`userEvent` 内部要 `Date.now()` 推进，冻住就死循环）。
+ * 测试在渲染前把值压到毫秒级，生产代码只读不改。
+ */
+export const OCR_POLL_LIMITS = {
+  /** 轮询间隔。后端每识别一页就写一次库，1.5 秒足够跟手，又不至于把 SQLite 敲出火星。 */
+  intervalMs: 1500,
+  /**
+   * 每页给多少秒预算。
+   *
+   * 实测：4 线程（`AI_READER_OCR_THREADS` 默认值）在 28 核机器上约 12.3 秒/页。
+   * 这里给 30 秒，留 2.4 倍余量给核心更少的机器，及边跑边服务请求的情况。
+   *
+   * 血的教训：第一版按 3.4 秒/页估的 45 分钟总上限。那个数字来自验证脚本里
+   * `RapidOCR()` 默认用满 28 核的测量——生产是 4 线程，慢了 3.6 倍。结果一本
+   * 231 页的书跑了 47 分 28 秒，前端在 45 分钟放弃，**比完成早 2 分半**，
+   * 教材明明入库了却始终不出现在列表里。
+   */
+  secondsPerPage: 30,
+  /** 模型加载与头几页偏慢的固定开销。 */
+  pageSlack: 30,
+  /** 再小的书也至少等这么久——扫描件通常是几十页起，没必要为小书缩短。 */
+  minBudgetMs: 45 * 60 * 1000,
+  /**
+   * 进度多久不动就认定是**卡死**而不是慢。
+   *
+   * 这条比「总时长」有用得多：总时长区分不了「慢」和「死」，而用户遇到的恰恰是慢。
+   * 15 分钟没有任何一页完成，基本是 worker 真的挂了（或整机睡过去了）。
+   */
+  stallMs: 15 * 60 * 1000,
+};
+
+/** 本次识别任务的等待预算，按页数算。导出出来是为了能单测——分母算错没人会注意到。 */
+export function ocrPollBudget(totalPages, limits = OCR_POLL_LIMITS) {
+  const pages = Number(totalPages) || 0;
+  return Math.max(limits.minBudgetMs, (pages + limits.pageSlack) * limits.secondsPerPage * 1000);
+}
+
+/**
+ * 进行中的任务 id。存 localStorage 是为了**刷新页面后能接上进度**：
+ * 一次识别几十分钟，用户必然会在中途刷新，只放在组件 state 里就永久丢了。
+ *
+ * 读写一律 try/catch：Safari 无痕模式下 localStorage 直接抛异常，为了一句进度
+ * 提示把整个弹窗搞崩不值得。
+ */
+const OCR_TASK_KEY = 'ai_reader.ocrTaskId';
+
+function readStoredOcrTaskId() {
+  try {
+    return localStorage.getItem(OCR_TASK_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberStoredOcrTaskId(taskId) {
+  try {
+    localStorage.setItem(OCR_TASK_KEY, taskId);
+  } catch {
+    // 存不下就只是「刷新后接不上」，这次识别照常跑
+  }
+}
+
+function forgetStoredOcrTaskId() {
+  try {
+    localStorage.removeItem(OCR_TASK_KEY);
+  } catch {
+    // 同上，删不掉也不影响本次会话
+  }
+}
 
 /** 更换教材弹窗：可切换已有教材，也可上传 PDF / Word / 纯文本教材。 */
 export default function BookModal({ open, onClose }) {
@@ -34,39 +103,79 @@ export default function BookModal({ open, onClose }) {
   const inputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState(null);
-  const [taskId, setTaskId] = useState(null);
+  // 初值直接从 localStorage 取：刷新页面后要能接上还没跑完的那次识别
+  const [taskId, setTaskId] = useState(() => readStoredOcrTaskId());
   const [task, setTask] = useState(null);
 
   /**
-   * 轮询扫描件识别进度，直到 `done` / `failed` / 任务消失 / 超时。
+   * 打开弹窗就重读一次教材列表。
+   *
+   * 这一条是「列表自愈」：列表原本只在 Provider 挂载时拉一次，之后只有上传 /
+   * 识别成功才主动刷新。于是任何在后台完成的入库（最典型的就是几十分钟的 OCR）
+   * 都不会体现在界面上，用户只能自己想到去刷新页面。重开弹窗就重读服务端，
+   * 成本是一次请求，收益是这一类「东西明明在库里却看不见」的问题不会再出现。
+   *
+   * 用 `refreshBooks` 而不是 `reload`：前者不置 `loading = true`，不会让主页闪加载态。
+   */
+  useEffect(() => {
+    if (!open) return;
+    refreshBooks().catch(() => {
+      // 拉不到时 BookProvider 会置 error，主页随即换成「连不上教材服务 + 重试」。
+      // 这是想要的结果：连不上就该说出来，而不是让人对着一个点不动的列表继续点。
+    });
+  }, [open, refreshBooks]);
+
+  /**
+   * 轮询扫描件识别进度，直到 `done` / `failed` / 任务消失 / 放弃等待。
    *
    * **这个 effect 必须声明在下面那句 `if (!open) return null` 之前**：Hook 不能在
    * 渲染中途被跳过，放到早退之后，一开一合弹窗 React 就会抛错。
-   * 同理它**不依赖 `open`**：识别要跑十几分钟，中途关掉弹窗是正常操作，关掉之后
+   * 同理它**不依赖 `open`**：识别要跑几十分钟，中途关掉弹窗是正常操作，关掉之后
    * 照样得继续问，才能在他回来时（或通过 toast）把结果告诉他。
    *
    * 依赖数组刻意只写 `[taskId]`：`task` 每 1.5 秒就是一个新对象，把 `task` 或
-   * 它的 `donePages` 放进来，等于每轮都重建 effect——那 45 分钟的上限会被
-   * 一次次重置，永远兜不住。闭包里的 `refreshBooks` / `toast` 虽然身份会变，
+   * 它的 `donePages` 放进来，等于每轮都重建 effect——预算计时与卡死计时都会被
+   * 反复重置，两个保险同时失效。闭包里的 `refreshBooks` / `toast` 虽然身份会变，
    * 但它们操作的都是 Provider 里的状态，用哪一次渲染的版本结果一样。
    */
   useEffect(() => {
     if (!taskId) return undefined;
+    const { intervalMs, stallMs, minBudgetMs } = OCR_POLL_LIMITS;
     const startedAt = Date.now();
+    // 预算按页数算，但页数要等第一次拿到任务才知道；先按最保守的下限起步，
+    // 拿到 totalPages 后立刻换成真实预算。
+    let budget = minBudgetMs;
+    let lastDone = -1;
+    let lastProgressAt = Date.now();
     let timer = null;
     let cancelled = false;
 
     const stop = () => {
       timer = null;
+      forgetStoredOcrTaskId();
       setTaskId(null);
       setTask(null);
     };
 
+    /** 放弃等待。**先刷一次列表再提示**——「刚好在完成前放弃」正是踩过的坑。 */
+    const giveUp = async (message) => {
+      stop();
+      try {
+        await refreshBooks();
+      } catch {
+        // 刷不动就算了，用户自己刷新页面也能看到
+      }
+      toast(message);
+    };
+
     const tick = async () => {
       if (cancelled) return;
-      if (Date.now() - startedAt > OCR_POLL_TIMEOUT) {
-        stop();
-        toast('扫描件识别超过 45 分钟仍未结束，已停止等待；稍后刷新教材列表看看是否已经导入');
+      if (Date.now() - lastProgressAt > stallMs) {
+        await giveUp('扫描件识别卡住了（进度十几分钟没有变化），已停止等待；这本教材没有导入');
+        return;
+      }
+      if (Date.now() - startedAt > budget) {
+        await giveUp('扫描件识别耗时超出预期，已停止等待；识别可能仍在后台继续，稍后刷新页面看看');
         return;
       }
 
@@ -75,7 +184,7 @@ export default function BookModal({ open, onClose }) {
         latest = await api.fetchOcrTask(taskId);
       } catch {
         // 网络抖动而已，不当成失败，下一轮再问
-        timer = setTimeout(tick, OCR_POLL_INTERVAL);
+        timer = setTimeout(tick, intervalMs);
         return;
       }
       if (cancelled) return;
@@ -88,6 +197,11 @@ export default function BookModal({ open, onClose }) {
       }
 
       setTask(latest);
+      if (latest.totalPages) budget = ocrPollBudget(latest.totalPages);
+      if (latest.donePages !== lastDone) {
+        lastDone = latest.donePages;
+        lastProgressAt = Date.now();
+      }
 
       if (latest.status === 'done') {
         stop();
@@ -118,10 +232,10 @@ export default function BookModal({ open, onClose }) {
         return;
       }
 
-      timer = setTimeout(tick, OCR_POLL_INTERVAL);
+      timer = setTimeout(tick, intervalMs);
     };
 
-    timer = setTimeout(tick, OCR_POLL_INTERVAL);
+    timer = setTimeout(tick, intervalMs);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
@@ -167,6 +281,7 @@ export default function BookModal({ open, onClose }) {
         // 不关弹窗——进度条得让用户看得见。
         setNotice(null);
         setTask(result.task);
+        rememberStoredOcrTaskId(result.task.id);
         setTaskId(result.task.id);
         return;
       }
@@ -192,6 +307,43 @@ export default function BookModal({ open, onClose }) {
     } finally {
       setUploading(false);
     }
+  };
+
+  /**
+   * 删除一本教材。这里是全站**唯一不可逆**的操作，所以：
+   *
+   * 1. 用原生 `confirm()` 拦住一次。它丑，但它是**同步阻塞**的：必须选「确定」或「取消」
+   *    才能继续，不会被点空白处顺手关掉，也不用自己管焦点和 Esc。确认文案必须把代价说全——
+   *    删掉的不只是书名，还有章节、段落、AI 讲解、学习进度；扫描件更要再等几十分钟。
+   * 2. 删成功后**必须 `refreshBooks()`**，而不是本地把这本书从数组里滤掉。后端才是
+   *    真相，本地过滤在「删到一半失败」时会显示出一本其实还在的教材。
+   */
+  const remove = async (book) => {
+    const name = [book.title, book.edition].filter(Boolean).join(' · ');
+    const ok = window.confirm(
+      `确定删除《${name}》吗？\n\n` +
+        `它的 ${book.chapters.length} 个章节、原文段落、AI 讲解和学习进度会一并删除，无法恢复。` +
+        `如果这是扫描件教材，再想看得重新上传并重新识别。`,
+    );
+    if (!ok) return;
+
+    try {
+      await api.deleteBook(book.id);
+    } catch (error) {
+      toast(error.message || '删除教材失败');
+      return;
+    }
+
+    let list = [];
+    try {
+      list = await refreshBooks();
+    } catch {
+      // 书已经删掉了，只是列表没刷出来。不用为此报错——重开弹窗会重读服务端。
+    }
+    // 删的是当前教材就顺手切到第一本：BookProvider 的兜底逻辑本来也不会让死 id 生效，
+    // 但显式切换能把 localStorage 里的那个死 id 一起换掉。
+    if (book.id === currentBookId && list.length) setCurrentBookId(list[0].id);
+    toast(`已删除《${name}》`);
   };
 
   /** 正在识别扫描件时不让再上传：本机 CPU 就那么多，两本一起识别只会互相拖慢，
@@ -238,20 +390,38 @@ export default function BookModal({ open, onClose }) {
         )}
         <div className="book-choices">
           {books.map((book) => (
-            <button key={book.id} className="book-choice" onClick={() => choose(book)}>
-              <span>
-                <b>
-                  {book.title} · {book.edition || '第 3 版'}
-                </b>
-                <br />
-                <small>
-                  {book.author} · {book.chapters.length} 个已识别章节
-                </small>
-                {/* 提示随教材一起存库，重开弹窗仍然看得到，不用凭记忆回想 */}
-                {book.contentWarning ? <em className="choice-warning">⚠ 内容可能没读全</em> : null}
-              </span>
-              <span>{book.id === currentBookId ? '当前' : '→'}</span>
-            </button>
+            <div key={book.id} className="book-choice">
+              {/* testid 给的是「选择」这个动作，点击区里不含删除——按书名查按钮会同时
+                  命中删除按钮（它的 aria-label 里也有书名），测试自己得能分得清。 */}
+              <button
+                className="book-choice-main"
+                data-testid={`book-choice-${book.id}`}
+                onClick={() => choose(book)}
+              >
+                <span>
+                  <b>
+                    {book.title} · {book.edition || '第 3 版'}
+                  </b>
+                  <br />
+                  <small>
+                    {book.author} · {book.chapters.length} 个已识别章节
+                  </small>
+                  {/* 提示随教材一起存库，重开弹窗仍然看得到，不用凭记忆回想 */}
+                  {book.contentWarning ? <em className="choice-warning">⚠ 内容可能没读全</em> : null}
+                </span>
+                <span>{book.id === currentBookId ? '当前' : '→'}</span>
+              </button>
+              {/* 删除按钮只能当兄弟节点，不能塞进上面那个按钮里：button 套 button 是
+                  非法 HTML，浏览器会把内层甩到外层之外，点击区域随即错位。 */}
+              <button
+                type="button"
+                className="book-delete"
+                aria-label={`删除《${book.title}》`}
+                onClick={() => remove(book)}
+              >
+                删除
+              </button>
+            </div>
           ))}
           <input
             ref={inputRef}

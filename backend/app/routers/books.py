@@ -111,6 +111,22 @@ async def upload_book(
     return book_meta(db, llm, book)
 
 
+@router.delete("/api/books/{book_id}", status_code=204)
+def delete_book(book_id: str, request: Request):
+    """删除教材及其全部下游数据（章节、段落、锚点、讲解、进度、追问线程）。
+
+    **不可恢复**，也是唯一会丢弃 OCR 结果的操作——扫描件删掉就得重新识别几十分钟。
+    所以 404 与 204 的语义要严格：前者表示这本教材本来就不存在，后者才是真的删了。
+    """
+    db, _, retrieval, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    db.delete_book(book_id)
+    # 检索缓存里还留着这本书的 BM25 索引与向量，不清理的话「已删教材」仍会被检索命中
+    retrieval.invalidate_book(book_id)
+    return None
+
+
 @router.get("/api/books/{book_id}/markdown")
 def get_book_markdown(book_id: str, request: Request):
     """把教材导出为 Markdown（按需渲染，库里不存副本）。

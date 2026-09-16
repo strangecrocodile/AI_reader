@@ -42,6 +42,21 @@ async function request(path, options = {}) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 从失败响应里取后端的 `detail` 文案（中文、能直接给用户看）。
+ * 后端不可达或返回的不是 JSON 时退回通用文案——上传/删除这类操作用户
+ * 最需要知道的是「为什么不行」，所以这个兜底宁可粗糙也不能是空的。
+ */
+async function failureDetail(res, fallback) {
+  try {
+    const data = await res.json();
+    if (data.detail) return data.detail;
+  } catch {
+    // 响应体不是 JSON，用兜底文案
+  }
+  return fallback;
+}
+
 export const api = {
   /** 获取教材列表（含章节与学习计划）。 */
   async fetchBooks() {
@@ -69,17 +84,26 @@ export const api = {
     if (title.trim()) form.append('title', title.trim());
     const res = await fetch(`${apiBase}/api/books`, { method: 'POST', body: form });
     if (!res.ok) {
-      let detail = `上传失败（${res.status}）`;
-      try {
-        const data = await res.json();
-        if (data.detail) detail = data.detail;
-      } catch {
-        // 保留通用错误文案
-      }
-      throw new Error(detail);
+      throw new Error(await failureDetail(res, `上传失败（${res.status}）`));
     }
     const body = await res.json();
     return res.status === 202 ? { kind: 'ocr', task: body.task } : { kind: 'book', book: body };
+  },
+
+  /**
+   * 删除教材及其全部下游数据（章节、段落、锚点、讲解、学习进度、追问线程）。
+   *
+   * **不可恢复**，也是唯一会丢弃 OCR 结果的操作——扫描件删掉就得重新识别几十分钟。
+   * 所以确认这一步由调用方负责，这里只负责把后端的话原样带回去。
+   */
+  async deleteBook(bookId) {
+    if (!useBackend()) {
+      throw new Error('演示模式不支持删除教材，请先连接 FastAPI 后端');
+    }
+    const res = await fetch(`${apiBase}/api/books/${bookId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      throw new Error(await failureDetail(res, `删除失败（${res.status}）`));
+    }
   },
 
   /**

@@ -30,6 +30,26 @@ function renderApp(initialEntries = ['/']) {
   );
 }
 
+/**
+ * 让 `fetchBooks` 表现得像真后端：**只有上传成功之后，列表里才会多出新教材**。
+ *
+ * 换教材弹窗现在每次打开都会重读一次列表（自愈用），所以「第一次返回 A、第二次返回
+ * B」这种写死的调用序列对不上号了——必须让返回值取决于上传有没有发生过。
+ *
+ * @returns {{ fetchBooks: import('vitest').Mock, uploadBook: import('vitest').Mock }}
+ */
+function serveUploadedBook(uploaded) {
+  let uploadedYet = false;
+  const fetchBooks = vi
+    .spyOn(api, 'fetchBooks')
+    .mockImplementation(async () => (uploadedYet ? [...mockBooks, uploaded] : mockBooks));
+  const uploadBook = vi.spyOn(api, 'uploadBook').mockImplementation(async () => {
+    uploadedYet = true;
+    return { kind: 'book', book: uploaded };
+  });
+  return { fetchBooks, uploadBook };
+}
+
 /** 模拟在原文里拖选第一段（带锚点的段落）。 */
 function selectFirstParagraph(paper) {
   const firstSpan = paper.querySelector('p .source');
@@ -64,7 +84,8 @@ describe('主页', () => {
     await screen.findByText('正在学习的教材');
 
     await user.click(screen.getByRole('button', { name: /更换教材/ }));
-    await user.click(screen.getByRole('button', { name: /线性代数/ }));
+    // 按 testid 取而不是按书名：行里现在还有一个「删除《线性代数》」按钮，按书名会命中两个
+    await user.click(screen.getByTestId('book-choice-linalg6'));
 
     expect(screen.getByTestId('book-progress')).toHaveTextContent('6% 已完成');
     expect(screen.getByTestId('book-cover')).toHaveTextContent('线性代数');
@@ -77,11 +98,7 @@ describe('主页', () => {
       title: '新上传教材',
       cover: { ...mockBooks[0].cover, lines: ['新上传教材'] },
     };
-    const fetchBooks = vi
-      .spyOn(api, 'fetchBooks')
-      .mockResolvedValueOnce(mockBooks)
-      .mockResolvedValueOnce([...mockBooks, uploaded]);
-    const uploadBook = vi.spyOn(api, 'uploadBook').mockResolvedValue({ kind: 'book', book: uploaded });
+    const { fetchBooks, uploadBook } = serveUploadedBook(uploaded);
     const user = userEvent.setup();
 
     renderApp();
@@ -92,7 +109,9 @@ describe('主页', () => {
     fireEvent.change(screen.getByLabelText('选择教材文件'), { target: { files: [file] } });
 
     await waitFor(() => expect(uploadBook).toHaveBeenCalledWith(file));
-    expect(fetchBooks).toHaveBeenCalledTimes(2);
+    // 3 次 = 挂载 + 开弹窗时自愈重读 + 上传成功后刷新。删掉上传后那次刷新就只剩 2 次，
+    // 所以这个数字确实在守着「上传完必须重读列表」。
+    expect(fetchBooks).toHaveBeenCalledTimes(3);
     expect(await screen.findByTestId('book-cover')).toHaveTextContent('新上传教材');
     expect(screen.getByText('《新上传教材》已上传并识别 3 个章节')).toBeInTheDocument();
 
@@ -108,11 +127,7 @@ describe('主页', () => {
       contentWarning: '整本教材只解析出 6 个字的正文，内容可能大部分没被读出来；1 个表格',
       cover: { ...mockBooks[0].cover, lines: ['窄教材'] },
     };
-    const fetchBooks = vi
-      .spyOn(api, 'fetchBooks')
-      .mockResolvedValueOnce(mockBooks)
-      .mockResolvedValueOnce([...mockBooks, uploaded]);
-    vi.spyOn(api, 'uploadBook').mockResolvedValue({ kind: 'book', book: uploaded });
+    const { fetchBooks } = serveUploadedBook(uploaded);
 
     const user = userEvent.setup();
     renderApp();
@@ -149,13 +164,7 @@ describe('主页', () => {
       title: '微积分入门（Word 版）',
       cover: { ...mockBooks[0].cover, lines: ['微积分入门（Word 版）'] },
     };
-    const fetchBooks = vi
-      .spyOn(api, 'fetchBooks')
-      .mockResolvedValueOnce(mockBooks)
-      .mockResolvedValueOnce([...mockBooks, uploaded]);
-    const uploadBook = vi
-      .spyOn(api, 'uploadBook')
-      .mockResolvedValue({ kind: 'book', book: uploaded });
+    const { fetchBooks, uploadBook } = serveUploadedBook(uploaded);
     const user = userEvent.setup();
 
     renderApp();

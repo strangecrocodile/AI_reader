@@ -168,6 +168,7 @@ cd tools\kb-agent
 | 重新生成示例教材（PDF） | `.venv\Scripts\python.exe scripts\make_demo_pdf.py` |
 | 安装扫描件 OCR 依赖（可选） | `.venv\Scripts\python.exe -m pip install -r requirements-ocr.txt` |
 | 导出教材 Markdown | `curl http://localhost:8000/api/books/<id>/markdown -o book.md` |
+| 删除教材（不可恢复） | `curl -X DELETE http://localhost:8000/api/books/<id>` |
 | 跑后端测试 | `.venv\Scripts\python.exe -m pytest` |
 | 启动前端开发服务器 | `npm run dev` |
 | 跑前端测试 | `npm test` |
@@ -233,7 +234,18 @@ cd tools\kb-agent
 **上传扫描件 PDF 后一直在识别？**
 扫描件没有文本层，后端会自动转成 OCR 异步任务（进度条在「更换教材」弹窗里）。
 一本 300 页的教材大约十几分钟，识别期间可以关掉弹窗继续学习，完成后会提示你。
+**刷新页面也能接上进度**（任务 id 存在浏览器本地）；万一看到「已停止等待」，
+那只是前端不再等，**识别可能仍在后台继续**——重新打开「更换教材」弹窗，列表会重新读一次服务端。
 没装 OCR 依赖时不会静默失败，而是给出一条带 `pip install -r requirements-ocr.txt` 的提示。
+
+**扫描件明明识别完了，「更换教材」里却找不到它？**
+重新打开这个弹窗即可：每次打开都会重读一次教材列表。识别要跑几十分钟，用户中途刷新或关掉弹窗都很正常，
+所以在后台完成的入库必须自己冒出来，不能等人去刷新整个页面。
+
+**删了的教材能恢复吗？**
+不能。删除会连同章节、原文段落、AI 讲解、学习进度和追问线程一起清掉，界面会先弹一个确认框。
+**这是唯一会丢弃 OCR 结果的操作**——扫描件删掉就得重新上传、重新识别几十分钟；
+文字版 PDF / Word / 文本重传很快，但进度和追问也不会回来。
 
 **识别到一半会不会先入库半本书？**
 不会，**全有或全无**：识别中途出错时一行都不写库，任务标为失败并说明跑到第几页。

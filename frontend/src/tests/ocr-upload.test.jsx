@@ -100,17 +100,20 @@ describe('扫描件上传（OCR 异步任务）', () => {
       title: '扫描教材',
       cover: { ...mockBooks[0].cover, lines: ['扫描教材'] },
     };
+    // 列表要像真后端那样，**识别完成之前**查不到这本书——否则「完成后刷新列表」这条
+    // 断言会因为开弹窗时已经刷到过而白通过。
+    let imported = false;
     const fetchBooks = vi
       .spyOn(api, 'fetchBooks')
-      .mockResolvedValueOnce(mockBooks)
-      .mockResolvedValue([...mockBooks, scanned]);
+      .mockImplementation(async () => (imported ? [...mockBooks, scanned] : mockBooks));
     vi.spyOn(api, 'uploadBook').mockResolvedValue({
       kind: 'ocr',
       task: ocrTask({ status: 'pending', title: '扫描教材' }),
     });
-    vi.spyOn(api, 'fetchOcrTask').mockResolvedValue(
-      ocrTask({ status: 'done', title: '扫描教材', donePages: 300, bookId: 'scanned-book' }),
-    );
+    vi.spyOn(api, 'fetchOcrTask').mockImplementation(async () => {
+      imported = true;
+      return ocrTask({ status: 'done', title: '扫描教材', donePages: 300, bookId: 'scanned-book' });
+    });
 
     const user = userEvent.setup();
     renderApp();
@@ -123,7 +126,8 @@ describe('扫描件上传（OCR 异步任务）', () => {
     ).toBeInTheDocument();
     // 进度块收掉，教材切过去（先 refreshBooks 再切，避免切到列表里还没有的书）
     expect(screen.queryByRole('progressbar')).toBeNull();
-    expect(fetchBooks).toHaveBeenCalledTimes(2);
+    // 3 次 = 挂载 + 开弹窗时自愈重读 + 识别完成后刷新
+    expect(fetchBooks).toHaveBeenCalledTimes(3);
     await waitFor(() => expect(screen.getByTestId('book-cover')).toHaveTextContent('扫描教材'));
   });
 
