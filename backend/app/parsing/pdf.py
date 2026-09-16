@@ -8,7 +8,8 @@
 `content.runs`——由 span 的字号/字体名/flags/基线推出的粗体、斜体、上下标与字号档位，
 阅读页据此还原教材的行内版式。`section.text` 仍是片段拼出的纯文本，检索链不受影响。
 
-仅处理文本型 PDF；扫描件/OCR 不在范围内（见产品设计文档）。
+这里只处理**文本型** PDF。扫描件没有文本层，解析出来会是一本空书，所以由
+`probe_pdf` 先判定、再由路由层转给 OCR（`parsing/ocr_pdf.py`），本模块不参与。
 """
 import re
 from collections import defaultdict
@@ -409,6 +410,43 @@ def _split_styled_paragraphs(
     return paras
 
 
+def _split_paragraphs(text: str, skip_lines: Optional[set] = None) -> List[str]:
+    """按当前 PDF 段落规则切纯文本段落，供 OCR 路径复用。
+
+    OCR 只有文字行，没有 PDF span；但页眉/页脚过滤、句末断段和目录噪声的口径
+    必须和文本型 PDF 一致，否则两条导入路径会产生不同形状的章节正文。
+    """
+    paras: List[str] = []
+    cur: List[str] = []
+
+    def flush() -> None:
+        if not cur:
+            return
+        paragraph = _clean_paragraph("".join(cur))
+        if paragraph:
+            paras.append(paragraph)
+        cur.clear()
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            flush()
+            continue
+        if skip_lines and _normalize_line(line) in skip_lines:
+            continue
+        if len(line) <= 8 and re.fullmatch(r"[\d\s\-—.·]+", line):
+            continue
+        if DOT_LEADER_RE.search(line):
+            continue
+        if URL_ONLY_RE.fullmatch(line):
+            continue
+        cur.append(line)
+        if _ends_sentence(line) and len(line) > 6:
+            flush()
+    flush()
+    return paras
+
+
 def _line_y(line) -> float:
     """一行的顶部 y（用 bbox；缺失时退回 span 原点）。"""
     bbox = line.get("bbox")
@@ -449,6 +487,38 @@ def _detect_heading_y(page, body_size: float) -> dict:
                 continue  # 页码/页眉
             result[y] = text
     return result
+
+
+@dataclass
+class PdfProbe:
+    """上传前的廉价体检结果，用来决定这本 PDF 该走哪条解析路径。"""
+
+    pages: int
+    chars_per_page: float
+    scanned: bool
+
+
+def probe_pdf(data: bytes, sample_pages: int = 12) -> Optional[PdfProbe]:
+    """廉价判定是否为扫描件：只抽样若干页统计文本量，成本与书长无关。"""
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception:
+        return None
+    try:
+        n_pages = doc.page_count
+        if n_pages == 0:
+            return None
+        step = max(1, n_pages // sample_pages)
+        pages = list(range(0, n_pages, step))[:sample_pages]
+        chars = sum(len(doc[i].get_text("text").strip()) for i in pages)
+        per_page = chars / len(pages)
+        return PdfProbe(
+            pages=n_pages,
+            chars_per_page=per_page,
+            scanned=n_pages >= 3 and per_page < SPARSE_CHARS_PER_PAGE,
+        )
+    finally:
+        doc.close()
 
 
 def parse_pdf_stream(
@@ -522,8 +592,9 @@ def parse_pdf_stream(
         page_texts = [doc[i].get_text("text") for i in range(n_pages)]
         total_chars = sum(len(t.strip()) for t in page_texts)
         if n_pages >= 3 and total_chars / n_pages < SPARSE_CHARS_PER_PAGE:
+            # 只说事实，不给结论：能不能走 OCR 由路由层决定（那里才知道 OCR 是否可用）
             notes.append(
-                "PDF 几乎提取不到文字，可能是扫描件或图片版（没有文本层），这类文件无法用于检索问答"
+                "PDF 几乎提取不到文字，可能是扫描件或图片版（没有文本层）"
             )
         first_page_head = next(
             (ln.strip() for ln in page_texts[0].splitlines() if ln.strip() and not re.fullmatch(r"[\d\s\-—.]+", ln.strip())),

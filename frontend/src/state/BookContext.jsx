@@ -14,12 +14,16 @@ export function BookProvider({ children }) {
   const [error, setError] = useState(null);
   const [currentBookId, setCurrentBookIdState] = useState(() => localStorage.getItem(CURRENT_BOOK_KEY));
 
-  const refreshBooks = useCallback(async () => {
+  const refreshBooks = useCallback(async (extraBooks = []) => {
     try {
       const list = await api.fetchBooks();
-      setBooks(Array.isArray(list) ? list : []);
+      const next = Array.isArray(list) ? list : [];
+      for (const book of extraBooks) {
+        if (book && !next.some((item) => item.id === book.id)) next.push(book);
+      }
+      setBooks(next);
       setError(null);
-      return list;
+      return next;
     } catch (err) {
       setError(err);
       throw err;

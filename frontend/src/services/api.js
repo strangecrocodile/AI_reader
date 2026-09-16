@@ -18,6 +18,10 @@ const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$
 let apiBase = import.meta.env.MODE === 'test' ? '' : configuredApiBase;
 const PROGRESS_KEY = 'ai_reader.chapterProgress';
 
+/** 上传体积上限，与后端 `services/ingest.py` 的 `MAX_UPLOAD_BYTES` 保持一致。
+ *  前端先拦一道只是为了省掉一次几百 MB 的无用上传，真正的把关在后端。 */
+export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+
 /** 运行时切换后端地址（也用于测试）；传空字符串回到演示模式。 */
 export function configureApiBase(url) {
   apiBase = url ? String(url).replace(/\/$/, '') : '';
@@ -38,6 +42,21 @@ async function request(path, options = {}) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 从失败响应里取后端的 `detail` 文案（中文、能直接给用户看）。
+ * 后端不可达或返回的不是 JSON 时退回通用文案——上传/删除这类操作用户
+ * 最需要知道的是「为什么不行」，所以这个兜底宁可粗糙也不能是空的。
+ */
+async function failureDetail(res, fallback) {
+  try {
+    const data = await res.json();
+    if (data.detail) return data.detail;
+  } catch {
+    // 响应体不是 JSON，用兜底文案
+  }
+  return fallback;
+}
+
 export const api = {
   /** 获取教材列表（含章节与学习计划）。 */
   async fetchBooks() {
@@ -46,7 +65,16 @@ export const api = {
     return books.map((b) => withLocalProgress(b));
   },
 
-  /** 上传文本型 PDF，后端解析目录、段落与锚点后返回教材元信息。 */
+  /**
+   * 上传教材。后端按「有没有文本层」分两条路，所以返回值也分两种：
+   *
+   * - `{ kind: 'book', book }` —— 常规解析（201），`book` 就是教材元信息，可以立即用；
+   * - `{ kind: 'ocr', task }` —— 后端判定这是扫描件（202），已经把它转成异步识别任务，
+   *   此刻**还没有教材**。要拿 `task.id` 去 `fetchOcrTask` 轮询，识别完才有书。
+   *
+   * 用显式的 `kind` 而不是「有没有 task 字段」来区分，是为了让调用方的分支
+   * 在前端就写死，语义上骗不了人。
+   */
   async uploadBook(file, title = '') {
     if (!useBackend()) {
       throw new Error('演示模式不支持真实 PDF 上传，请先连接 FastAPI 后端');
@@ -56,15 +84,40 @@ export const api = {
     if (title.trim()) form.append('title', title.trim());
     const res = await fetch(`${apiBase}/api/books`, { method: 'POST', body: form });
     if (!res.ok) {
-      let detail = `上传失败（${res.status}）`;
-      try {
-        const data = await res.json();
-        if (data.detail) detail = data.detail;
-      } catch {
-        // 保留通用错误文案
-      }
-      throw new Error(detail);
+      throw new Error(await failureDetail(res, `上传失败（${res.status}）`));
     }
+    const body = await res.json();
+    return res.status === 202 ? { kind: 'ocr', task: body.task } : { kind: 'book', book: body };
+  },
+
+  /**
+   * 删除教材及其全部下游数据（章节、段落、锚点、讲解、学习进度、追问线程）。
+   *
+   * **不可恢复**，也是唯一会丢弃 OCR 结果的操作——扫描件删掉就得重新识别几十分钟。
+   * 所以确认这一步由调用方负责，这里只负责把后端的话原样带回去。
+   */
+  async deleteBook(bookId) {
+    if (!useBackend()) {
+      throw new Error('演示模式不支持删除教材，请先连接 FastAPI 后端');
+    }
+    const res = await fetch(`${apiBase}/api/books/${bookId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      throw new Error(await failureDetail(res, `删除失败（${res.status}）`));
+    }
+  },
+
+  /**
+   * 查询扫描件识别任务的进度。
+   *
+   * 任务不存在时返回 `null`——那意味着后端重启过（任务状态落在 SQLite 里还在，
+   * 但跑识别的线程随进程没了），调用方据此提示「重新上传」，而不是干转圈。
+   * 网络异常照常抛出，让调用方当作「这一轮没问到」重试——把 404 和断网混为一谈，
+   * 会让一次网络抖动就报「任务已中断」。
+   */
+  async fetchOcrTask(taskId) {
+    const res = await fetch(`${apiBase}/api/ocr/tasks/${taskId}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`API ${res.status}: /api/ocr/tasks/${taskId}`);
     return res.json();
   },
 

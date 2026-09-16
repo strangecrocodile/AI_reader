@@ -1,0 +1,16 @@
+# 扫描件 OCR 的可选依赖。
+#
+# **刻意不放进 requirements.txt**：主依赖要保住「不装模型、不配 Key 也能跑通
+# 导入教材 → 学习 → 溯源问答」这个开箱演示能力。没装这个文件里的东西时，
+# 扫描件上传会得到一条带安装指引的提示，其余功能一律不受影响。
+#
+#   cd backend
+#   .venv\Scripts\python.exe -m pip install -r requirements-ocr.txt
+#
+# 装完重启后端即可，不需要改任何配置。
+
+# 用 rapidocr 3.x 而不是 rapidocr-onnxruntime：后者声明 requires_python <3.13，
+# 在本仓库的 Python 3.13 虚拟环境里根本装不上。
+rapidocr>=3.9,<4
+# 推理后端单独装，方便日后换 OpenVINO / Paddle 而不动上层代码
+onnxruntime>=1.20

@@ -507,6 +507,60 @@ def test_delete_thread(client, demo_pdf_bytes):
     assert client.delete(f"/api/threads/{thread['id']}").status_code == 404
 
 
+def test_delete_book_removes_it_from_the_shelf(client, demo_pdf_bytes):
+    book = _upload(client, demo_pdf_bytes)
+
+    assert client.delete(f"/api/books/{book['id']}").status_code == 204
+    assert client.get(f"/api/books/{book['id']}").status_code == 404
+    assert all(b["id"] != book["id"] for b in client.get("/api/books").json())
+    # 幂等：第二次删是「本来就不存在」，而不是又一次成功
+    assert client.delete(f"/api/books/{book['id']}").status_code == 404
+
+
+def test_delete_book_clears_downstream_rows_and_caches(app, client, demo_pdf_bytes):
+    """删一本真书（走完整的导入链路），确认下游数据和检索缓存都跟着走。
+
+    这里必须逐表直查，不能只看 `get_book` 为空：`sections` / `anchors` /
+    `explanations` / `plans` 没有指向 books 的外键，只靠级联会留下孤儿
+    （见 `tests/test_db_delete.py`）。
+    """
+    book = _upload(client, demo_pdf_bytes)
+    chapter_id = book["chapters"][0]["id"]
+    # 先问一次，把 BM25 与全书索引缓存撑起来
+    client.post(
+        "/api/ask",
+        json={"question": "导数是什么", "bookId": book["id"], "chapterId": chapter_id},
+    )
+
+    assert client.delete(f"/api/books/{book['id']}").status_code == 204
+
+    db = app.state.db
+    assert db.chapters_of(book["id"]) == []
+    assert db.sections_of(book["id"], chapter_id) == []
+    assert db.anchors_of(book["id"], chapter_id) == []
+    assert db.get_explanation(book["id"], chapter_id) is None
+    assert db.get_plan(book["id"]) is None
+
+    retrieval = app.state.retrieval
+    assert all(key[0] != book["id"] for key in retrieval._bm25_cache)
+    assert book["id"] not in retrieval._book_cache
+    assert book["id"] not in retrieval._vectors_built
+
+
+def test_delete_book_leaves_the_other_book_alone(client, demo_pdf_bytes, demo_markdown_bytes):
+    first = _upload(client, demo_pdf_bytes)
+    second = client.post(
+        "/api/books", files={"file": ("notes.md", demo_markdown_bytes, "text/markdown")}
+    ).json()
+
+    client.delete(f"/api/books/{second['id']}")
+
+    remaining = client.get("/api/books").json()
+    assert [b["id"] for b in remaining] == [first["id"]]
+    assert client.get(f"/api/books/{first['id']}").status_code == 200
+    assert len(client.get(f"/api/books/{first['id']}").json()["chapters"]) == len(first["chapters"])
+
+
 def test_plan_generation(client, demo_pdf_bytes):
     book = _upload(client, demo_pdf_bytes)
     resp = client.post(f"/api/books/{book['id']}/plan")

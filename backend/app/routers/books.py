@@ -1,17 +1,23 @@
 """教材/章节/规划接口。"""
 import json
 import logging
+import re
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from ..models import AskRequest, EventRequest, ProgressRequest, ThreadRequest
+from ..parsing.pdf import probe_pdf
 from ..serializers import book_meta, chapter_content
 from ..services import legacy_doc
 from ..services import threads as thread_service
 from ..services.ask import answer_question, stream_answer
+from ..services.export import export_book_markdown
 from ..services.ingest import (
+    MAX_UPLOAD_BYTES,
+    PDF,
     SOURCE_MEDIA_TYPES,
     SUPPORTED_MESSAGE,
     detect_format,
@@ -19,6 +25,7 @@ from ..services.ingest import (
     source_path_of,
 )
 from ..services.knowledge import get_knowledge
+from ..services.ocr import OcrUnavailable
 from ..services.progress import record_event
 
 logger = logging.getLogger(__name__)
@@ -76,15 +83,40 @@ async def upload_book(
     file: UploadFile = File(...),
     title: str = Form(""),
 ):
-    """上传教材（PDF / Word / 纯文本）：解析目录/章节/段落并入库。"""
+    """上传教材（PDF / Word / 纯文本）：解析目录/章节/段落并入库。
+
+    扫描件 PDF 例外：它没有文本层，直接解析只会得到一本空书，所以改走 OCR
+    异步任务——立刻返回 **202 + 任务 id**，前端轮询 `/api/ocr/tasks/{id}` 看进度。
+    文字版 PDF 与其它格式的行为完全不变（201 + 教材元信息）。
+    """
     db, llm, retrieval, settings = _state(request)
     filename = file.filename or ""
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="文件为空")
-    if detect_format(filename, file.content_type) is None:
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件超过 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB 上限，请分段后再上传",
+        )
+    fmt = detect_format(filename, file.content_type)
+    if fmt is None:
         raise HTTPException(status_code=415, detail=SUPPORTED_MESSAGE)
     fallback_title = title or Path(filename).stem or "未命名教材"
+
+    # 抽样探一次，只对 PDF 有意义（Word/txt 没有「扫描件」这个概念）
+    probe = probe_pdf(data) if fmt == PDF else None
+    if probe is not None and probe.scanned:
+        try:
+            task = request.app.state.ocr.submit(data, filename, fallback_title, probe=probe)
+        except OcrUnavailable as e:
+            # 认得出来是扫描件、但服务端没有 OCR。给的是「怎么装上」而不是「解析失败」
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        except ValueError:
+            pass  # 判定与抽样结果不一致（换页再探差异），退回常规解析路径
+        else:
+            return JSONResponse(status_code=202, content={"task": task})
+
     try:
         info = ingest_file_bytes(
             db,
@@ -123,6 +155,55 @@ def get_book_source(book_id: str, request: Request):
         filename=path.name,
         content_disposition_type="attachment",
     )
+
+
+@router.delete("/api/books/{book_id}", status_code=204)
+def delete_book(book_id: str, request: Request):
+    """删除教材及其全部下游数据（章节、段落、锚点、讲解、进度、追问线程）。
+
+    **不可恢复**，也是唯一会丢弃 OCR 结果的操作——扫描件删掉就得重新识别几十分钟。
+    所以 404 与 204 的语义要严格：前者表示这本教材本来就不存在，后者才是真的删了。
+    """
+    db, _, retrieval, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    db.delete_book(book_id)
+    # 检索缓存里还留着这本书的 BM25 索引与向量，不清理的话「已删教材」仍会被检索命中
+    retrieval.invalidate_book(book_id)
+    return None
+
+
+@router.get("/api/books/{book_id}/markdown")
+def get_book_markdown(book_id: str, request: Request):
+    """把教材导出为 Markdown（按需渲染，库里不存副本）。
+
+    每个段落带 `<!-- page: N -->`，扫描件里那个 N 是原书印刷页码，
+    所以导出的文件仍然可以拿去核对。
+    """
+    db, _, _, _ = _state(request)
+    book = db.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="教材不存在")
+    text = export_book_markdown(db, book)
+    return Response(
+        content=text,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": _attachment_header(book.get("title") or "教材")},
+    )
+
+
+def _attachment_header(title: str) -> str:
+    """拼一个能带中文书名的 Content-Disposition。
+
+    HTTP 头只能放 latin-1，中文书名直接塞进 `filename=` 会让 Starlette 抛
+    UnicodeEncodeError（下载整本书的接口因为书名是中文而 500，很难查）。
+    所以同时给两遍：`filename` 是 ASCII 兜底，`filename*` 是 RFC 5987 的 UTF-8 真名，
+    浏览器优先用后者。
+    """
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", title).strip().strip(".")[:60] or "教材"
+    ascii_name = cleaned.encode("ascii", "ignore").decode("ascii").strip() or "textbook"
+    quoted = quote(f"{cleaned}.md", safe="")
+    return f"attachment; filename=\"{ascii_name}.md\"; filename*=UTF-8''{quoted}"
 
 
 @router.get("/api/books/{book_id}/chapters/{chapter_id}")
