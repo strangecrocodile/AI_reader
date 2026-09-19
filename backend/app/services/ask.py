@@ -44,7 +44,11 @@ def _retrieve(
     chapter_id: str,
     question: str,
 ) -> Optional[Dict[str, Any]]:
-    """检索证据：本章优先，必要时跨章；依据不足返回 None。"""
+    """检索证据：本章优先，必要时跨章；依据不足返回 None。
+
+    判定看 top1 的朴素覆盖率（已知缺陷：长问句会被误判成无依据，
+    见 `tests/test_api.py::test_ask_long_natural_question_about_the_textbooks_own_topic`）。
+    """
     scoped = retrieval.search_scoped(book_id, chapter_id, question, k=MAX_EVIDENCE)
     hits = scoped["hits"]
     top = hits[0] if hits else None

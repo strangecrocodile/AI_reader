@@ -278,6 +278,34 @@ def test_ask_stays_in_chapter_when_chapter_has_evidence(client, demo_pdf_bytes):
     assert all(item["chapterId"] == chapter["id"] for item in data["sourceDetails"])
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="已知缺陷：无依据判定用朴素覆盖率，中文长问句会被摊薄到阈值以下（见 bm25.coverage 文档）",
+)
+def test_ask_long_natural_question_about_the_textbooks_own_topic(client, demo_pdf_bytes):
+    """教材讲清楚了的内容，不该因为问句写得长就被回「教材中未找到直接依据」。
+
+    实测 demo 教材：第 2 章明确定义了导数，但「导数在实际问题中有什么用处」的
+    二元组覆盖率只有 0.167 < 0.22，于是被判成无依据——**问得越认真越容易被拒答**。
+
+    `strict=True`：这个缺陷一旦真被修好（换分词或语义判据），本用例会 XPASS
+    并让套件失败，提醒把它改成正常断言，而不是让 xfail 一直挂着。
+    """
+    book = _upload(client, demo_pdf_bytes)
+    second = book["chapters"][1]
+
+    data = client.post(
+        "/api/ask",
+        json={
+            "question": "导数在实际问题中有什么用处",
+            "bookId": book["id"],
+            "chapterId": second["id"],
+        },
+    ).json()
+
+    assert data["sources"], "教材里讲了导数，不该答「教材中未找到直接依据」"
+
+
 def _sse_frames(body: str):
     """把 SSE 响应体拆成 [(event, data)]。"""
     frames = []

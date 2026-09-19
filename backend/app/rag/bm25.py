@@ -74,7 +74,15 @@ class BM25Index:
         return [(doc_id, s) for doc_id, s in scored if s > 0][:k]
 
     def coverage(self, query: str, doc_id: str) -> float:
-        """查询词在文档中出现的比例（0~1），用于「无依据」判定。"""
+        """查询词在文档中出现的比例（0~1），用于「无依据」判定。
+
+        已知缺陷：中文按二元组切分，这个比例随问句变长而下降，因此一句自然的
+        长问句可能低于阈值、把教材里讲清楚的内容判成「未找到依据」。评测见
+        `tests/test_api.py::test_ask_long_natural_question_about_the_textbooks_own_topic`。
+        修它需要分词（jieba）或语义判据，继续调阈值解决不了——已实测：
+        「今晚月亮有多圆」匹配到的 `有多`（df=1）比合法问句匹配到的 `导数`
+        （df=8）IDF 更高，任何基于匹配量的单调判据都无法同时接受后者、拒绝前者。
+        """
         q_tokens = set(tokenize(query))
         if not q_tokens:
             return 0.0

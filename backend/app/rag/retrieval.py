@@ -1,4 +1,4 @@
-"""混合检索服务：BM25 必选 + 向量可选，按权重融合。
+"""混合检索服务：BM25 必选 + 向量可选，按 RRF 融合名次。
 
 检索粒度：段落（section）。命中结果带 `chapter_id`，因此跨章回退时
 前端仍能知道「依据来自哪一章的哪一段」并跳转过去。
@@ -7,6 +7,12 @@
 - `chapter`：只在本章内检索（默认，最快，符合“围绕当前章节学习”的主线）；
 - `book`：本章最佳命中的覆盖率不足时（教材可能压根没在这一章讲），
   扩展到全书检索，把其他章节的相关段落也纳入证据。
+
+已知缺陷：`chapter`/`book` 与「有没有依据」两个判断都用朴素 `coverage`
+（中文二元组命中比例），它随问句长度下降，长问句可能被误判成「教材里没有」。
+实测与修法讨论见
+`tests/test_api.py::test_ask_long_natural_question_about_the_textbooks_own_topic`
+与 `bm25.coverage` 的文档字符串。
 """
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,7 +22,10 @@ from .bm25 import BM25Index
 from .vector import VectorIndex
 
 NO_EVIDENCE_THRESHOLD = 0.22  # 覆盖率低于该值视为「教材中未找到直接依据」
-VECTOR_WEIGHT = 0.4  # 向量相似度在融合分中的权重
+#: RRF 融合常数：只依赖名次，免疫 BM25 无界分与余弦 0~1 的量纲差
+RRF_K = 60
+#: 每个通道取多少个候选再融合（比最终 k 宽，给 RRF 留出交叉的余地）
+CANDIDATE_MULTIPLIER = 3
 
 
 class RetrievalService:
@@ -105,39 +114,51 @@ class RetrievalService:
         allowed_ids: set,
         use_vector: bool,
     ) -> List[Dict[str, Any]]:
-        """BM25（+ 可选向量）融合打分，返回带章节信息的命中。"""
-        merged: Dict[str, float] = {}
-        if use_vector:
-            merged.update(self._vector_scores(book_id, query, max(k * 3, 10), allowed_ids))
-        for doc_id, score in index.search(query, k=max(k * 3, 10)):
-            if doc_id not in allowed_ids:
-                continue
-            merged[doc_id] = merged.get(doc_id, 0.0) + score
+        """BM25（+ 可选向量）按 RRF 融合，返回带章节信息的命中。
 
-        top = sorted(merged.items(), key=lambda item: item[1], reverse=True)[:k]
+        融合用 RRF（Reciprocal Rank Fusion）而不是「BM25 原始分 + 余弦×权重」：
+        BM25 分是无界的（同一本书里可以从 0.x 到几十，取决于命中了多少词、
+        词有多罕见），余弦只有 0~1，线性相加会让向量通道被彻底淹没——配了
+        embedding 也等于没配。RRF 只看名次，天然免疫这种量纲差。
+        """
+        candidates = max(k * CANDIDATE_MULTIPLIER, 10)
+        fused: Dict[str, float] = {}
+        for rank, doc_id in enumerate(
+            (doc_id for doc_id, _ in index.search(query, k=candidates) if doc_id in allowed_ids),
+            start=1,
+        ):
+            fused[doc_id] = fused.get(doc_id, 0.0) + 1.0 / (RRF_K + rank)
+        for rank, doc_id in enumerate(
+            self._vector_ranked(book_id, query, candidates, allowed_ids) if use_vector else [],
+            start=1,
+        ):
+            fused[doc_id] = fused.get(doc_id, 0.0) + 1.0 / (RRF_K + rank)
+
+        top = sorted(fused.items(), key=lambda item: item[1], reverse=True)[:k]
         return [
             {
                 "section_id": doc_id,
                 "chapter_id": owner.get(doc_id, ""),
-                "score": round(score, 4),
+                "score": round(score, 6),
                 "coverage": round(index.coverage(query, doc_id), 4),
             }
             for doc_id, score in top
         ]
 
-    def _vector_scores(self, book_id: str, query: str, k: int, allowed_ids: set) -> Dict[str, float]:
+    def _vector_ranked(self, book_id: str, query: str, k: int, allowed_ids: set) -> List[str]:
+        """向量通道的名次列表（未配置/出错时为空，不影响 BM25 主链路）。"""
         self._ensure_vectors(book_id)
         vec = self._get_vector()
         if vec is None:
-            return {}
+            return []
         try:
-            return {
-                doc_id: similarity * VECTOR_WEIGHT
-                for doc_id, similarity in vec.search(query, k=k, allowed_ids=allowed_ids)
+            return [
+                doc_id
+                for doc_id, _ in vec.search(query, k=k, allowed_ids=allowed_ids)
                 if doc_id in allowed_ids
-            }
+            ]
         except Exception:
-            return {}
+            return []
 
     def search(
         self,
