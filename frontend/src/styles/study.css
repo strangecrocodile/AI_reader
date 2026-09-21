@@ -681,6 +681,41 @@
   background: var(--soft);
 }
 
+/* ---------- 拒答的出口：一句「没找到」之外，还要给出下一步 ---------- */
+.no-evidence {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(154, 90, 0, 0.25);
+}
+
+.no-evidence-hint {
+  display: block;
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.closest-list {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.closest-title {
+  flex-basis: 100%;
+  color: #9a5a00;
+  font-size: 12px;
+}
+
+/* 最接近的段落不是回答依据，用与 .source-chip 不同的观感区分开 */
+.closest-list .source-chip {
+  border-color: rgba(154, 90, 0, 0.28);
+  background: rgba(255, 149, 0, 0.06);
+  color: #7a4a00;
+}
+
 /* ---------- 划词气泡：锚定在选区旁的追问浮层 ---------- */
 .selection-pill {
   position: fixed;

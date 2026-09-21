@@ -185,27 +185,67 @@ export function Chat({ chat, onOpenSource }) {
             <br />
             {msg.text || (msg.streaming ? '正在思考…' : '')}
             {msg.streaming && msg.text && <span className="stream-caret" aria-hidden="true" />}
-            {msg.scope === 'book' && !msg.streaming && (
-              <small className="scope-note">依据取自全书，含其他章节的段落</small>
-            )}
-            {msg.sources?.length > 0 && (
-              <div className="answer-sources">
-                {msg.sources.map((sid) => (
-                  <button
-                    key={sid}
-                    className={`source-chip${isCrossChapter(sid, msg.sourceDetails) ? ' cross' : ''}`}
-                    onClick={() => onOpenSource(sid, findDetail(sid, msg.sourceDetails))}
-                  >
-                    {sourceLabel(sid, msg.sourceDetails)} ↖
-                  </button>
-                ))}
-              </div>
+            {msg.noEvidence && !msg.streaming ? (
+              <NoEvidenceExit message={msg} onOpenSource={onOpenSource} />
+            ) : (
+              <>
+                {msg.scope === 'book' && !msg.streaming && (
+                  <small className="scope-note">依据取自全书，含其他章节的段落</small>
+                )}
+                {msg.sources?.length > 0 && (
+                  <div className="answer-sources">
+                    {msg.sources.map((sid) => (
+                      <button
+                        key={sid}
+                        className={`source-chip${isCrossChapter(sid, msg.sourceDetails) ? ' cross' : ''}`}
+                        onClick={() => onOpenSource(sid, findDetail(sid, msg.sourceDetails))}
+                      >
+                        {sourceLabel(sid, msg.sourceDetails)} ↖
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         ),
       )}
     </div>
   );
+}
+
+/**
+ * 拒答的出口：告诉用户下一步怎么办，并把教材里最接近的段落摆出来。
+ *
+ * 这些段落**不是回答依据**（后端放在 `closest` 而不是 `sources` 里），所以措辞上要
+ * 说清「供你判断」——把没被采信过的原文说成依据，等于毁掉溯源可信度。
+ */
+export function NoEvidenceExit({ message, onOpenSource }) {
+  const closest = message.closest ?? [];
+  return (
+    <div className="no-evidence" data-testid="no-evidence">
+      {message.hint && <small className="no-evidence-hint">{message.hint}</small>}
+      {closest.length > 0 && (
+        <div className="closest-list" data-testid="closest-list">
+          <small className="closest-title">教材里最接近的段落（供你判断，不是回答依据）：</small>
+          {closest.map((detail) => (
+            <button
+              key={detail.id}
+              className={`source-chip${detail.crossChapter ? ' cross' : ''}`}
+              onClick={() => onOpenSource(detail.id, detail)}
+            >
+              {closestLabel(detail)} ↗
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function closestLabel(detail) {
+  const chapter = detail.crossChapter && detail.chapterTitle ? `${detail.chapterTitle} · ` : '';
+  return detail.page ? `${chapter}第 ${detail.page} 页` : detail.id;
 }
 
 function findDetail(sourceId, details = []) {

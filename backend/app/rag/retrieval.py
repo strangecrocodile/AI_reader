@@ -8,10 +8,10 @@
 - `search_book`：**全书检索**，本章命中加权。问答走这条——教材常把总述/定义
   放在靠前的总论章、把例题放在具体章节，只查本章就拿不到定义（见该函数文档）。
 
-已知缺陷：「有没有依据」的判定仍用朴素 `coverage`（中文二元组命中比例），
-它随问句长度下降，长问句可能被误判成「教材里没有」。实测与修法讨论见
-`tests/test_api.py::test_ask_long_natural_question_about_the_textbooks_own_topic`
-与 `bm25.coverage` 的文档字符串。
+「有没有依据」的判定不在本模块，见 `bm25.BM25Index.recurring_matches`：它只看命中的词
+是不是教材反复在讲的概念，与问句长短无关。**不要退回按覆盖率判定**——那个比例随问句
+变长而下降，会把教材讲清楚的内容判成「未找到依据」，实测两类问句的覆盖区间重叠、
+换分词也分不开（见 `bm25.coverage` 的文档字符串）。
 """
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,7 +20,6 @@ from ..db import Database
 from .bm25 import BM25Index
 from .vector import VectorIndex
 
-NO_EVIDENCE_THRESHOLD = 0.22  # 覆盖率低于该值视为「教材中未找到直接依据」
 #: RRF 融合常数：只依赖名次，免疫 BM25 无界分与余弦 0~1 的量纲差
 RRF_K = 60
 #: 每个通道取多少个候选再融合（比最终 k 宽，给 RRF 留出交叉的余地）
@@ -165,6 +164,10 @@ class RetrievalService:
                 "chapter_id": owner.get(doc_id, ""),
                 "score": round(score, 6),
                 "coverage": round(index.coverage(query, doc_id), 4),
+                # 命中词里「教材反复在讲的概念」。问答据此判「有没有依据」，
+                # 不看覆盖率——理由见 `bm25.coverage` 与 `bm25.recurring_matches`。
+                # df 的口径取决于传进来的 index：全书检索给全书口径，章节检索给本章口径。
+                "recurring_terms": index.recurring_matches(query, doc_id),
             }
             for doc_id, score in top
         ]

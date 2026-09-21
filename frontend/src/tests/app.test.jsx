@@ -532,6 +532,58 @@ describe('划词问答', () => {
     expect(await screen.findByText('本章内容尚未准备')).toBeInTheDocument();
     streamSpy.mockRestore();
   });
+
+  it('拒答时给出下一步和教材里最接近的段落，而不是一句「没找到」', async () => {
+    const user = userEvent.setup();
+    const streamSpy = vi.spyOn(api, 'askStream').mockImplementation(async (_params, handlers) => {
+      handlers.onDelta?.('教材中未找到直接依据');
+      handlers.onDone?.({
+        answer: '教材中未找到直接依据',
+        sources: [],
+        sourceDetails: [],
+        scope: 'book',
+        noEvidence: true,
+        hint: '可以换个问法：点出教材里的具体概念。',
+        closest: [
+          {
+            id: 'source-limit',
+            page: 12,
+            text: '比值 Δy / Δx 的极限存在',
+            chapterId: 'ch2',
+            chapterTitle: '导数与微分',
+          },
+          {
+            id: 'source-mean',
+            page: 47,
+            text: '中值定理的内容',
+            chapterId: 'ch3',
+            chapterTitle: '微分中值定理',
+          },
+        ],
+      });
+    });
+
+    renderApp(['/study/calc7/ch2']);
+    await screen.findByTestId('paper');
+    await user.type(screen.getByLabelText('提问输入框'), '今天晚上的月亮有多圆？');
+    await user.click(screen.getByRole('button', { name: '提问' }));
+
+    // 出口之一：下一步怎么办
+    expect(await screen.findByTestId('no-evidence')).toBeInTheDocument();
+    expect(screen.getByText(/可以换个问法/)).toBeInTheDocument();
+
+    // 出口之二：教材里最接近的段落；同章只标页码，跨章标出章节名
+    expect(await screen.findByRole('button', { name: /^第 12 页/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /微分中值定理 · 第 47 页/ })).toBeInTheDocument();
+
+    // 拒答没有依据：不该出现「依据取自全书」这句提示
+    expect(screen.queryByText(/依据取自全书/)).not.toBeInTheDocument();
+
+    // 点跨章的那条能跳过去（历史消息没有 crossChapter 标记，靠 chapterId 判定）
+    await user.click(screen.getByRole('button', { name: /微分中值定理 · 第 47 页/ }));
+    expect(await screen.findByText('本章内容尚未准备')).toBeInTheDocument();
+    streamSpy.mockRestore();
+  });
 });
 
 describe('划词气泡与追问线程', () => {

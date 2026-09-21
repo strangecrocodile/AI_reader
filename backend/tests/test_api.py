@@ -293,18 +293,15 @@ def test_ask_prefers_current_chapter_but_searches_the_whole_book(client, demo_pd
     assert {item["chapterId"] for item in data["sourceDetails"]} > {chapter["id"]}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="已知缺陷：无依据判定用朴素覆盖率，中文长问句会被摊薄到阈值以下（见 bm25.coverage 文档）",
-)
 def test_ask_long_natural_question_about_the_textbooks_own_topic(client, demo_pdf_bytes):
     """教材讲清楚了的内容，不该因为问句写得长就被回「教材中未找到直接依据」。
 
-    实测 demo 教材：第 2 章明确定义了导数，但「导数在实际问题中有什么用处」的
-    二元组覆盖率只有 0.167 < 0.22，于是被判成无依据——**问得越认真越容易被拒答**。
+    这里曾经是 `xfail(strict=True)`：旧口径用朴素覆盖率判依据，而覆盖率的分母是问句
+    词数——demo 教材第 2 章明确定义了导数，但「导数在实际问题中有什么用处」的二元组
+    覆盖率只有 0.167 < 0.22，于是被判成无依据，**问得越认真越容易被拒答**。
 
-    `strict=True`：这个缺陷一旦真被修好（换分词或语义判据），本用例会 XPASS
-    并让套件失败，提醒把它改成正常断言，而不是让 xfail 一直挂着。
+    现在判定改用「命中词里有没有教材反复在讲的概念」（`bm25.recurring_matches`），
+    它与问句长短无关，所以这条从「缺陷的看门人」转成正常断言。
     """
     book = _upload(client, demo_pdf_bytes)
     second = book["chapters"][1]
@@ -319,6 +316,7 @@ def test_ask_long_natural_question_about_the_textbooks_own_topic(client, demo_pd
     ).json()
 
     assert data["sources"], "教材里讲了导数，不该答「教材中未找到直接依据」"
+    assert data["noEvidence"] is False
 
 
 def _sse_frames(body: str):

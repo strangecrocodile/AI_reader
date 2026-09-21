@@ -256,7 +256,16 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ question, bookId, chapterId, selectedText: selectedText || null }),
       });
-      return { text: data.answer, sources: data.sources, sourceDetails: data.sourceDetails || [] };
+      return {
+        text: data.answer,
+        sources: data.sources,
+        sourceDetails: data.sourceDetails || [],
+        // 拒答出口：契约恒定，两个接口都带（见后端 services/ask.py 的 `_no_evidence_result`）
+        noEvidence: data.noEvidence === true,
+        closest: data.closest || [],
+        hint: data.hint || '',
+        scope: data.scope || '',
+      };
     }
     await delay(350); // 模拟模型推理耗时
     return answerFor(question, { selectedText });
@@ -286,6 +295,10 @@ export const api = {
         sources: result.sources ?? [],
         sourceDetails: [],
         scope: 'chapter',
+        // 演示模式没有后端的依据判定，恒为「有依据」，保持与真实接口同一个形状
+        noEvidence: false,
+        closest: [],
+        hint: '',
         threadId: threadId ?? null,
       };
       if (threadId) {

@@ -129,7 +129,7 @@ def test_selected_paragraph_is_first_evidence_in_stream(client, app, demo_pdf_by
     assert frames[0][1]["sourceDetails"][0]["id"] == anchor["id"]
 
     done = next(payload for event, payload in frames if event == "done")
-    assert "noEvidence" not in done
+    assert done["noEvidence"] is False, "契约恒定：成功回答也带这个字段，值为 False"
     assert done["sources"][0] == anchor["id"]
 
 

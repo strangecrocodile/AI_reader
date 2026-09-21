@@ -6,7 +6,7 @@
 - `stream_answer`：SSE 事件流（`POST /api/ask/stream`）：meta → delta* → done。
 
 划词追问（带 `selected_text` / `anchor_id`）另有一条：用户选中的那段原文按锚点
-直取、作为第一条证据，且不受覆盖率门槛约束——用户是**指着它**提问的。检索词也
+直取、作为第一条证据，且不受依据判定约束——用户是**指着它**提问的。检索词也
 换成「选中原文 + 问题」，否则「这段话在讲什么」这类问题根本没有可检索的查询词。
 
 反幻觉约定：
@@ -16,7 +16,14 @@
   没有引用则回退到第一条证据；
 - 证据来自**全书检索**（本章命中加权），题面之外的章节也能进证据——教材常把总述
   与定义放在靠前的总论章、把例题放在具体章节，只看本章就凑不出「提炼」所需的材料；
-  全书覆盖率达标的段落一个都没有时，才回复「教材中未找到直接依据」，不生成内容。
+- 命中词里**一个「教材反复在讲的概念」都没有、且问句也没被哪段原样回答**时，
+  才回复「教材中未找到直接依据」，不生成内容。两条通道的判定见 `_has_evidence`：
+  它不看命中占问句的比例，所以**问得详细不会被拒答**（旧口径只看覆盖率，
+  长问句会被摊薄，见 `bm25.coverage`）。
+
+拒答不是死路：`noEvidence` 为真时同时给出 `hint`（换个问法 / 划词提问）与
+`closest`（教材里最接近的几条段落，带章节与页码，可点开核对）。`closest` **不是依据**，
+不进 `sources`，避免把「没答上来」和「出处是这里」混为一谈。
 
 跨章：来源详情带 `chapterId` / `chapterTitle`，前端据此跳到对应章节核对。
 """
@@ -27,7 +34,7 @@ from typing import Any, Dict, Iterator, List, Optional
 from ..db import Database
 from ..llm.client import LLMError
 from ..llm.prompts import ASK_SYSTEM, ask_user
-from ..rag.retrieval import NO_EVIDENCE_THRESHOLD, RetrievalService
+from ..rag.retrieval import RetrievalService
 from . import threads as thread_service
 
 logger = logging.getLogger(__name__)
@@ -39,6 +46,19 @@ logger = logging.getLogger(__name__)
 #: 「别把噪声塞进上下文」之间的位置。
 MAX_EVIDENCE = 10
 NO_EVIDENCE_TEXT = "教材中未找到直接依据"
+#: 拒答时给用户的下一步。拒答不该是死路——用户要么是问偏了，要么该换划词这条路。
+NO_EVIDENCE_HINT = (
+    "可以换个问法：点出教材里的具体概念（例如「导数的定义」）；"
+    "或者直接选中相关原文再提问——划词追问不受依据判定限制。"
+)
+#: 拒答时附带展示的「教材里最接近的段落」条数。给多了像在硬凑依据，给少了没法让人判断。
+CLOSEST_LIMIT = 3
+#: 判定依据的**第二条**通道：top1 的朴素覆盖率 ≥ 该值，说明问句几乎被这段原样回答了。
+#: 覆盖率单独用是错的（分母是问句词数，长问句会被摊薄，见 `bm25.coverage`），
+#: 但它能救「复现词」救不了的场景：语料很小、或某个概念全书只在一处出现时，
+#: 所有词的 df 都是 1，复现词必然为空——那时问句与段落的**高度重合**才是依据。
+#: 实测：单段教材里「为什么列表是可变的？」覆盖率 1.0；题外问句最高只有 0.167。
+VERBATIM_COVERAGE = 0.22
 STREAM_CHUNK_CHARS = 14
 #: 兜底答案里每条原文摘录的字数上限
 EXCERPT_CHARS = 120
@@ -87,6 +107,57 @@ def _pinned_evidence(
     }
 
 
+def _has_evidence(hit: Optional[Dict[str, Any]]) -> bool:
+    """这个命中能不能当依据——**两条通道满足其一即可**：
+
+    1. **复现词**：命中的词是教材反复在讲的概念（`bm25.recurring_matches`）。
+       与问句长短无关，救的是长问句——「导数在实际问题中有什么用处」里教材
+       不会原样重复这句话，但「导数」是它在反复讲的概念。
+    2. **覆盖率达标**：问句几乎被这段原样回答了（`VERBATIM_COVERAGE`）。
+       救的是复现词失效的场景：语料很小，或某个概念全书只出现在一处，
+       此时所有词的 df 都是 1，复现词必然为空，而问句与段落的**重合度**才是依据。
+
+    单独用任何一条都会误拒：只用 1，单段教材上无解；只用 2，长问句被摊薄
+    （这正是「问得越认真越容易被拒答」的根因）。所以是并集，不是二选一。
+    """
+    if not hit:
+        return False
+    return bool(hit["recurring_terms"]) or hit["coverage"] >= VERBATIM_COVERAGE
+
+
+def _closest(
+    hits: List[Dict[str, Any]],
+    sections: Dict[str, Dict[str, Any]],
+    chapters: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """拒答时附带展示的「教材里最接近的段落」。
+
+    拒答不等于教材里什么都没有——更常见的是**有相关段落、但没到能据此作答的程度**
+    （或者问题本身问偏了）。把最接近的几条连章节与页码摆出来，用户自己就能判断是该
+    换个问法、还是其实想问的是另一件事。
+
+    形状与 `sourceDetails` 一致，前端复用同一套渲染与「跳到原文」。
+    但它们**不是依据**：单独一个字段、不进 `sources`，避免把「没答上来」和
+    「出处就是这里」混为一谈——溯源的可信度就靠这条边界撑着。
+    """
+    out: List[Dict[str, Any]] = []
+    for hit in hits[:CLOSEST_LIMIT]:
+        section = sections.get(hit["section_id"])
+        chapter = chapters.get(hit["chapter_id"])
+        if not section or not chapter:
+            continue
+        out.append(
+            {
+                "id": section["id"],
+                "page": section["page"],
+                "text": section["text"],
+                "chapterId": chapter["id"],
+                "chapterTitle": chapter["title"],
+            }
+        )
+    return out
+
+
 def _retrieve(
     db: Database,
     retrieval: RetrievalService,
@@ -95,23 +166,30 @@ def _retrieve(
     question: str,
     selected_text: str = "",
     anchor_id: str = "",
-) -> Optional[Dict[str, Any]]:
-    """检索全书证据（本章加权）；依据不足返回 None。
+) -> Dict[str, Any]:
+    """检索全书证据（本章加权）；返回带 `noEvidence` 的结果，拒答时附「出口」。
 
     范围是**整本教材**，不是「本章优先、本章不够才扩展」——回答要的是从全书相关内容
     里提炼，而教材把总述/定义与例题分放在不同章节是常态，先查本章会在本章命中的那一刻
     就错过定义（见 `RetrievalService.search_book`）。本章命中加权只影响排序，不排除其它章节。
 
-    判定看 top1 的朴素覆盖率（已知缺陷：长问句会被误判成无依据，
-    见 `tests/test_api.py::test_ask_long_natural_question_about_the_textbooks_own_topic`）。
+    判定看 `_has_evidence(top)`：**复现词**（教材在讲这个概念）**或**覆盖率达标
+    （这段几乎原样回答了问题）。旧口径只看「top1 的朴素覆盖率 ≥ 0.22」，它随问句
+    变长而下降，**认真提问反被拒答**：实测「导数是什么」0.250 通过，而同一本书的
+    「导数在实际问题中有什么用处」0.167 被拒。复现词与前一条通道都不看问句长度，
+    这个反例已由
+    `tests/test_api.py::test_ask_long_natural_question_about_the_textbooks_own_topic` 钉住。
 
     划词追问（带 `selected_text` / `anchor_id`）在这条规则之上多两条：
 
-    1. 选中的那段原文直接作为第一条证据，且**不参与覆盖率判定**——用户已经明确
+    1. 选中的那段原文直接作为第一条证据，且**不参与依据判定**——用户已经明确
        指着它问，再判一次「有没有依据」是本末倒置；
     2. 检索词换成「选中原文 + 问题」。否则「这段话在讲什么」「这段为什么成立」这类
-       问题的查询词在教材里几乎不存在，检索覆盖率低于阈值，模型连被调用的机会
-       都没有——这是「划词提问总是无法回答」的主要原因之一。
+       问题的查询词在教材里几乎不存在，模型连被调用的机会都没有——这是
+       「划词提问总是无法回答」的主要原因之一。
+
+    返回值恒为 dict（不再返回 None）：拒答也是一条要给用户看的结果，而且必须带上
+    `closest` 与 `scope`，否则前端只能渲染一句「没找到」，用户无路可走。
     """
     chapters = {c["id"]: c for c in db.chapters_of(book_id)}
     pinned = _pinned_evidence(db, anchor_id, chapters)
@@ -120,13 +198,18 @@ def _retrieve(
     scoped = retrieval.search_book(book_id, chapter_id, query, k=MAX_EVIDENCE)
     hits = scoped["hits"]
     top = hits[0] if hits else None
-    if pinned is None and (not top or top["coverage"] < NO_EVIDENCE_THRESHOLD):
-        return None
 
     sections: Dict[str, Dict[str, Any]] = {}
     for hit_chapter_id in {hit["chapter_id"] for hit in hits}:
         for section in db.sections_of(book_id, hit_chapter_id):
             sections[section["id"]] = section
+
+    if pinned is None and not _has_evidence(top):
+        return {
+            "noEvidence": True,
+            "scope": scoped["scope"],
+            "closest": _closest(hits, sections, chapters),
+        }
 
     evidence: List[Dict[str, Any]] = [pinned] if pinned else []
     for hit in hits:
@@ -148,7 +231,11 @@ def _retrieve(
             }
         )
     if not evidence:
-        return None
+        return {
+            "noEvidence": True,
+            "scope": scoped["scope"],
+            "closest": _closest(hits, sections, chapters),
+        }
     source_details = [
         {
             "id": item["anchor_id"],
@@ -159,7 +246,12 @@ def _retrieve(
         }
         for item in evidence
     ]
-    return {"scope": scoped["scope"], "evidence": evidence, "sourceDetails": source_details}
+    return {
+        "noEvidence": False,
+        "scope": scoped["scope"],
+        "evidence": evidence,
+        "sourceDetails": source_details,
+    }
 
 
 def _cited_anchors(answer: str, evidence: List[Dict[str, Any]]) -> List[str]:
@@ -181,6 +273,26 @@ def _result(answer: str, evidence: List[Dict[str, Any]], prepared: Dict[str, Any
         "sources": sources,
         "sourceDetails": [item for item in prepared["sourceDetails"] if item["id"] in sources],
         "scope": prepared["scope"],
+        # 契约恒定：`noEvidence` 在两个接口、成功与拒答两条路上**都存在**，
+        # 客户端不必靠比对回答文本来判断是不是拒答（那是最脆的一种判法）。
+        "noEvidence": False,
+    }
+
+
+def _no_evidence_result(prepared: Dict[str, Any]) -> Dict[str, Any]:
+    """拒答结果：同一条消息里给出「为什么没有」和「下一步怎么办」。
+
+    `scope` 用检索真实反推出的值，不硬编码 `chapter`——全书检索扫的就是整本书，
+    谎报范围会让前端连「依据取自全书」这类提示都显示不出来。
+    """
+    return {
+        "answer": NO_EVIDENCE_TEXT,
+        "sources": [],
+        "sourceDetails": [],
+        "scope": prepared["scope"],
+        "noEvidence": True,
+        "closest": prepared["closest"],
+        "hint": NO_EVIDENCE_HINT,
     }
 
 
@@ -204,8 +316,8 @@ def answer_question(
 ) -> Dict[str, Any]:
     """一次性问答（非流式）。带 thread 时把这一问一答写进追问线程。"""
     prepared = _retrieve(db, retrieval, book_id, chapter_id, question, selected_text, anchor_id)
-    if prepared is None:
-        result = {"answer": NO_EVIDENCE_TEXT, "sources": [], "sourceDetails": [], "scope": "chapter"}
+    if prepared["noEvidence"]:
+        result = _no_evidence_result(prepared)
         _persist_exchange(db, thread, question, result)
         return {**result, "threadId": thread["id"] if thread else None}
 
@@ -273,14 +385,8 @@ def stream_answer(
         thread_service.append_message(db, thread["id"], "user", question)
 
     prepared = _retrieve(db, retrieval, book_id, chapter_id, question, selected_text, anchor_id)
-    if prepared is None:
-        result = {
-            "answer": NO_EVIDENCE_TEXT,
-            "sources": [],
-            "sourceDetails": [],
-            "scope": "chapter",
-            "noEvidence": True,
-        }
+    if prepared["noEvidence"]:
+        result = _no_evidence_result(prepared)
         _persist_answer(db, thread, result)
         yield {"event": "done", "threadId": thread["id"] if thread else None, **result}
         return
@@ -333,6 +439,10 @@ def _persist_answer(db: Database, thread: Optional[Dict[str, Any]], result: Dict
         sources=result.get("sources"),
         source_details=result.get("sourceDetails"),
         scope=result.get("scope", ""),
+        # 拒答的「出口」也要落库：线程重新打开时不能只剩下「没找到」这一句。
+        no_evidence=bool(result.get("noEvidence")),
+        closest=result.get("closest"),
+        hint=result.get("hint", ""),
     )
 
 

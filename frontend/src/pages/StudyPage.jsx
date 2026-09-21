@@ -212,14 +212,18 @@ export default function StudyPage() {
   /** 点击「教材依据」：同章定位高亮，跨章跳到对应章节再定位。 */
   const handleOpenSource = useCallback(
     (sourceId, detail) => {
-      if (detail?.crossChapter && detail.chapterId) {
+      // 跨章与否**以 chapterId 为准**，不只看 `crossChapter` 标记：从追问线程载入的
+      // 历史消息没经过 `withChapterFlags`，只凭标记会漏判，于是点跨章依据会在本章里
+      // 找不到锚点、静默失败。标记仍用于文案（见 `withChapterFlags`）。
+      const crossChapter = Boolean(detail?.chapterId && detail.chapterId !== chapterId);
+      if (crossChapter) {
         toast(`已跳到《${detail.chapterTitle}》核对原文`);
         navigate(`/study/${bookId}/${detail.chapterId}?sourceId=${encodeURIComponent(sourceId)}`);
         return;
       }
       focusSource(sourceId, detail?.page ? `教材依据 · 第 ${detail.page} 页` : undefined);
     },
-    [bookId, focusSource, navigate, toast],
+    [bookId, chapterId, focusSource, navigate, toast],
   );
 
   const askInThread = useCallback(
@@ -271,6 +275,11 @@ export default function StudyPage() {
                 sources: payload.sources ?? [],
                 sourceDetails: withChapterFlags(payload.sourceDetails),
                 scope: payload.scope,
+                // 拒答不是死路：把「下一步」和「教材里最接近的段落」也带进消息，
+                // 否则用户只看到一句「没找到」，无从判断该换个问法还是问偏了。
+                noEvidence: payload.noEvidence === true,
+                closest: withChapterFlags(payload.closest),
+                hint: payload.hint ?? '',
               })),
           },
         );

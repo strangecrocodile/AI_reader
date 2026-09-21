@@ -3,7 +3,7 @@ import pytest
 
 from app.config import Settings
 from app.db import Database
-from app.rag.retrieval import NO_EVIDENCE_THRESHOLD, RRF_K, RetrievalService
+from app.rag.retrieval import RRF_K, RetrievalService
 
 BOOK_ID = "b1"
 CH1 = "b1-ch1"
@@ -81,7 +81,10 @@ def test_chapter_search_keeps_chapter_id(retrieval):
 
     assert hits
     assert hits[0]["chapter_id"] == CH1
-    assert hits[0]["coverage"] >= NO_EVIDENCE_THRESHOLD
+    # 命中要带上「复现词」这个字段（问答据此判有没有依据）。
+    # 注意这里用的是**章节索引**，df 只算本章——「极限」在本章只出现一次，
+    # 所以这里只断言字段存在，不复现词非空；全书口径见下面的用例。
+    assert "recurring_terms" in hits[0]
 
 
 def test_book_search_reaches_other_chapters_even_when_current_chapter_matches(retrieval):
@@ -129,7 +132,7 @@ def test_book_search_scope_is_chapter_when_hits_are_all_local(retrieval):
     assert result["hits"]
     assert result["scope"] == "chapter"
     assert all(hit["chapter_id"] == CH1 for hit in result["hits"])
-    assert result["hits"][0]["coverage"] >= NO_EVIDENCE_THRESHOLD
+    assert "recurring_terms" in result["hits"][0]
 
 
 def test_fusion_is_rank_based_so_the_vector_channel_is_not_drowned(retrieval):
@@ -181,8 +184,22 @@ def test_book_search_crosses_chapters_when_current_chapter_is_silent(retrieval):
     result = retrieval.search_book(BOOK_ID, CH1, "平均变化率是什么")
 
     assert result["hits"][0]["chapter_id"] == CH2, "本章没讲，命中应来自第 2 章"
-    assert result["hits"][0]["coverage"] >= NO_EVIDENCE_THRESHOLD
+    assert result["hits"][0]["recurring_terms"]
     assert result["scope"] == "book"
+
+
+def test_recurring_terms_are_relative_to_the_index_scope(retrieval):
+    """复现词的口径跟着索引走：全书索引算全书 df，章节索引算本章 df。
+
+    这一条是给「判定该用哪个检索」留的护栏：判「教材里有没有」必须用全书检索
+    （`search_book`），用章节索引会把「只在别章讲过的概念」算成不复现而误拒。
+    """
+    book_hit = retrieval.search_book(BOOK_ID, CH1, "平均变化率是什么")["hits"][0]
+    assert book_hit["recurring_terms"], "全书口径下，第 2 章的「平均变化率」是复现词"
+
+    # 同样的问句限定在第 1 章内检索：第 1 章压根没讲平均变化率，没有复现词
+    chapter_hits = retrieval.search(BOOK_ID, CH1, "平均变化率是什么")
+    assert not any(hit["recurring_terms"] for hit in chapter_hits)
 
 
 def test_invalidate_book_clears_caches(retrieval):

@@ -71,14 +71,28 @@ def append_message(
     sources: Optional[List[str]] = None,
     source_details: Optional[List[Dict[str, Any]]] = None,
     scope: str = "",
+    no_evidence: bool = False,
+    closest: Optional[List[Dict[str, Any]]] = None,
+    hint: str = "",
 ) -> Dict[str, Any]:
-    """追加一条消息；`detail` 里存溯源信息（依据锚点与检索范围）。"""
+    """追加一条消息；`detail` 里存溯源信息（依据锚点、检索范围、拒答出口）。
+
+    `closest` / `hint` 是拒答时的「出口」（见 `services.ask._no_evidence_result`），
+    一并落库——线程重新打开时不能只剩下「没找到」那一句。
+    它们与 `sourceDetails` 分开存：前者不是依据，混在一起会污染溯源语义。
+    """
     row = db.add_thread_message(
         thread_id,
         role,
         text or "",
         sources=sources or [],
-        detail={"sourceDetails": source_details or [], "scope": scope},
+        detail={
+            "sourceDetails": source_details or [],
+            "scope": scope,
+            "noEvidence": bool(no_evidence),
+            "closest": closest or [],
+            "hint": hint,
+        },
     )
     db.touch_thread(thread_id)
     return _serialize_message(row)
@@ -95,6 +109,9 @@ def append_exchange(db: Database, thread_id: str, question: str, result: Dict[st
         sources=result.get("sources"),
         source_details=result.get("sourceDetails"),
         scope=result.get("scope", ""),
+        no_evidence=bool(result.get("noEvidence")),
+        closest=result.get("closest"),
+        hint=result.get("hint", ""),
     )
 
 
@@ -131,6 +148,10 @@ def _serialize_message(row: Dict[str, Any]) -> Dict[str, Any]:
         "sources": sources,
         "sourceDetails": detail.get("sourceDetails", []),
         "scope": detail.get("scope", ""),
+        # 契约与 `/api/ask` 一致：`noEvidence` 恒存在，客户端不必靠文本比对判拒答。
+        "noEvidence": bool(detail.get("noEvidence", False)),
+        "closest": detail.get("closest", []),
+        "hint": detail.get("hint", ""),
         "createdAt": row.get("created_at", ""),
     }
 
