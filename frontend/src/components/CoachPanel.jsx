@@ -186,7 +186,7 @@ export function Chat({ chat, onOpenSource }) {
             {msg.text || (msg.streaming ? '正在思考…' : '')}
             {msg.streaming && msg.text && <span className="stream-caret" aria-hidden="true" />}
             {msg.scope === 'book' && !msg.streaming && (
-              <small className="scope-note">本章依据不足，已扩展到全书检索</small>
+              <small className="scope-note">依据取自全书，含其他章节的段落</small>
             )}
             {msg.sources?.length > 0 && (
               <div className="answer-sources">

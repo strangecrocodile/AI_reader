@@ -1,16 +1,15 @@
 """混合检索服务：BM25 必选 + 向量可选，按 RRF 融合名次。
 
-检索粒度：段落（section）。命中结果带 `chapter_id`，因此跨章回退时
+检索粒度：段落（section）。命中结果带 `chapter_id`，因此跨章命中时
 前端仍能知道「依据来自哪一章的哪一段」并跳转过去。
 
-两种检索范围（`search_scoped`）：
-- `chapter`：只在本章内检索（默认，最快，符合“围绕当前章节学习”的主线）；
-- `book`：本章最佳命中的覆盖率不足时（教材可能压根没在这一章讲），
-  扩展到全书检索，把其他章节的相关段落也纳入证据。
+两种检索范围：
+- `search`：只在本章内检索（用于「这一章讲了什么」这类明确按章组织的场景）；
+- `search_book`：**全书检索**，本章命中加权。问答走这条——教材常把总述/定义
+  放在靠前的总论章、把例题放在具体章节，只查本章就拿不到定义（见该函数文档）。
 
-已知缺陷：`chapter`/`book` 与「有没有依据」两个判断都用朴素 `coverage`
-（中文二元组命中比例），它随问句长度下降，长问句可能被误判成「教材里没有」。
-实测与修法讨论见
+已知缺陷：「有没有依据」的判定仍用朴素 `coverage`（中文二元组命中比例），
+它随问句长度下降，长问句可能被误判成「教材里没有」。实测与修法讨论见
 `tests/test_api.py::test_ask_long_natural_question_about_the_textbooks_own_topic`
 与 `bm25.coverage` 的文档字符串。
 """
@@ -26,6 +25,12 @@ NO_EVIDENCE_THRESHOLD = 0.22  # 覆盖率低于该值视为「教材中未找到
 RRF_K = 60
 #: 每个通道取多少个候选再融合（比最终 k 宽，给 RRF 留出交叉的余地）
 CANDIDATE_MULTIPLIER = 3
+#: 全书检索时，当前章节命中的加权系数。加在 **BM25 原始分上、排名次之前**，
+#: 所以它只是一条「分数接近时本章优先」的倾向，不是门槛——1.35 倍越不过数量级
+#: 的差距，其它章节明显更相关的段落照样排在前面。
+#: 不能改加在融合分上：RRF 分被压缩在 1/(60+rank)，同一个乘数会变成几十名的
+#: 提前量，直接把「只影响排序」变成「本章说了算」。
+CHAPTER_BOOST = 1.35
 
 
 class RetrievalService:
@@ -113,8 +118,13 @@ class RetrievalService:
         k: int,
         allowed_ids: set,
         use_vector: bool,
+        preferred_chapter: str = "",
     ) -> List[Dict[str, Any]]:
         """BM25（+ 可选向量）按 RRF 融合，返回带章节信息的命中。
+
+        `preferred_chapter` 非空时给它名下的段落乘 `CHAPTER_BOOST`——用于全书检索
+        里「本章优先」。加权发生在**排名次之前**，所以它只改 BM25 通道内的先后，
+        不把任何量纲带进融合分；默认空串，因此本章内检索与它的既有行为完全不变。
 
         融合用 RRF（Reciprocal Rank Fusion）而不是「BM25 原始分 + 余弦×权重」：
         BM25 分是无界的（同一本书里可以从 0.x 到几十，取决于命中了多少词、
@@ -122,11 +132,25 @@ class RetrievalService:
         embedding 也等于没配。RRF 只看名次，天然免疫这种量纲差。
         """
         candidates = max(k * CANDIDATE_MULTIPLIER, 10)
+        ranked = sorted(
+            (
+                (
+                    doc_id,
+                    score
+                    * (
+                        CHAPTER_BOOST
+                        if preferred_chapter and owner.get(doc_id) == preferred_chapter
+                        else 1.0
+                    ),
+                )
+                for doc_id, score in index.search(query, k=candidates)
+                if doc_id in allowed_ids
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
         fused: Dict[str, float] = {}
-        for rank, doc_id in enumerate(
-            (doc_id for doc_id, _ in index.search(query, k=candidates) if doc_id in allowed_ids),
-            start=1,
-        ):
+        for rank, (doc_id, _) in enumerate(ranked, start=1):
             fused[doc_id] = fused.get(doc_id, 0.0) + 1.0 / (RRF_K + rank)
         for rank, doc_id in enumerate(
             self._vector_ranked(book_id, query, candidates, allowed_ids) if use_vector else [],
@@ -177,30 +201,31 @@ class RetrievalService:
         owner = {s["id"]: chapter_id for s in sections}
         return self._rank(book_id, index, owner, query, k, allowed_ids, use_vector)
 
-    def search_scoped(
+    def search_book(
         self,
         book_id: str,
         chapter_id: str,
         query: str,
-        k: int = 5,
+        k: int = 10,
         use_vector: bool = True,
     ) -> Dict[str, Any]:
-        """先本章、必要时扩展全书。
+        """全书检索（当前章节加权），返回 `{scope, hits}`。
 
-        返回 `{scope: 'chapter'|'book', hits: [...]}`：
-        - 本章最佳命中覆盖率达标 → 直接返回本章结果（行为与旧版一致）；
-        - 否则在全书范围内检索，命中可能来自其他章节（scope='book'）。
+        为什么不做「本章优先、本章够用就不查全书」：教材常把总述与定义放在靠前的
+        总论章，把例题放在讲该主题的具体章节。实测一本扫描教材里「聚类分析」最准确
+        的定义写在第 2 章，而相关例题全在第 6 章——本章命中达标就不再查全书的话，
+        那个定义永远进不了证据，模型也就无从「从全书相关内容里提炼」。所以这里
+        **每次都查全书**，只把本章命中加权，让同分时本章段落排前，但不排除其它章节。
+
+        `scope` 由命中结果反推：全部落在本章是 `chapter`，跨了章是 `book`
+        （前端据此提示「依据综合了多个章节」，并可跳到对应章节核对）。
         """
-        chapter_hits = self.search(book_id, chapter_id, query, k=k, use_vector=use_vector)
-        if chapter_hits and chapter_hits[0]["coverage"] >= NO_EVIDENCE_THRESHOLD:
-            return {"scope": "chapter", "hits": chapter_hits}
-
         index, owner = self._book_index(book_id)
         if not owner:
-            return {"scope": "chapter", "hits": chapter_hits}
-        book_hits = self._rank(book_id, index, owner, query, k, set(owner), use_vector)
-
-        if not book_hits:
-            return {"scope": "chapter", "hits": chapter_hits}
-        scope = "chapter" if all(hit["chapter_id"] == chapter_id for hit in book_hits) else "book"
-        return {"scope": scope, "hits": book_hits}
+            return {"scope": "chapter", "hits": []}
+        hits = self._rank(
+            book_id, index, owner, query, k, set(owner), use_vector,
+            preferred_chapter=chapter_id,
+        )
+        scope = "chapter" if all(hit["chapter_id"] == chapter_id for hit in hits) else "book"
+        return {"scope": scope, "hits": hits}

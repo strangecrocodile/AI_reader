@@ -43,25 +43,36 @@ def concept_user(chapter_title: str, material: str, anchors: list) -> str:
     )
 
 
-ASK_SYSTEM = """你是「AI讲师」，只能依据用户提供的教材片段回答当前问题。
+ASK_SYSTEM = """你是「AI讲师」，依据用户提供的**整本教材**片段回答当前问题。
 规则：
-1. 引用教材片段时，用「编号」在句中标出依据，例如 [1]；
-2. 编号只能取自给出的片段编号，禁止编造出处；
-3. 若教材片段不足以回答，直接回复「教材中未找到直接依据」，不要编造；
+1. 综合给出的片段，**提炼成一个连贯的回答**：先归纳它们共同说清了什么，再按
+   逻辑顺序把要点讲开。不要逐条复述片段，也不要写成「片段1说……片段2说……」。
+2. 这些片段来自教材的不同位置，彼此互补；把它们拼起来看，往往比单看任何一条都完整。
+   引用时用「编号」在句中标出依据，例如 [1]；编号只能取自给出的片段编号，
+   禁止编造出处，也不得补充片段之外的教材内容。
+3. 先尽力作答：片段往往只是教材的一部分，讲得不全也要把片段支撑得住的部分讲出来，
+   并说明哪一部分片段里没有；只有当片段与问题完全无关时，才回复「教材中未找到直接依据」。
 4. 直接输出回答正文：不要输出 JSON，也不要在结尾罗列编号清单。
-5. 片段可能来自不同章节；若依据来自其他章节，可以在句中点明是哪一章的结论。"""
+5. 依据来自其他章节时，可以在句中点明是哪一章的结论。
+6. 标注了「用户选中的原文」的那条片段，就是提问者指着问的那一段，优先围绕它作答。"""
 
 
 def ask_user(question: str, evidence: list, selected_text: str = "") -> str:
     blocks = []
     for i, ev in enumerate(evidence, start=1):
         chapter = f"《{ev['chapter_title']}》" if ev.get("chapter_title") else ""
-        blocks.append(f"[{i}] （锚点 {ev['anchor_id']}，{chapter}第 {ev['page']} 页）{ev['text'][:400]}")
+        # 划词选中的那段是用户指着问的，按原样给全（建线程时已限长），不参与 400 字截断
+        selected = bool(ev.get("selected"))
+        text = (ev.get("text") or "")
+        text = text if selected else text[:400]
+        mark = "（用户选中的原文）" if selected else ""
+        blocks.append(f"[{i}]{mark} （锚点 {ev['anchor_id']}，{chapter}第 {ev['page']} 页）{text}")
     ctx = "用户选中的原文：" + selected_text[:300] + "\n\n" if selected_text else ""
     return (
-        f"{ctx}教材片段：\n" + "\n".join(blocks) +
+        f"{ctx}教材片段（取自全书，可能分属不同章节）：\n" + "\n".join(blocks) +
         f"\n\n用户问题：{question}\n"
-        "请依据以上片段作答，并在句中使用 [编号] 标注依据。若片段不足以回答，回复「教材中未找到直接依据」。"
+        "请综合以上片段提炼成一个连贯的回答，并在句中使用 [编号] 标注依据。"
+        "片段能支撑多少就讲多少；只有片段与问题完全无关时，才回复「教材中未找到直接依据」。"
     )
 
 

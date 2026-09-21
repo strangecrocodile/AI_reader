@@ -181,6 +181,15 @@ def test_chapter_content_with_lesson(client, demo_pdf_bytes):
         break
 
 
+def _book_paragraph_ids(client, book) -> set:
+    """整本教材的段落 id。依据可能跨章（检索按全书做），所以核对范围也是全书。"""
+    ids = set()
+    for chapter in book["chapters"]:
+        chart = client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()
+        ids |= {seg["id"] for p in chart["paragraphs"] for seg in p.get("segs", [])}
+    return ids
+
+
 def test_ask_with_evidence(client, demo_pdf_bytes):
     book = _upload(client, demo_pdf_bytes)
     ch = book["chapters"][1]
@@ -196,9 +205,8 @@ def test_ask_with_evidence(client, demo_pdf_bytes):
     assert data["sourceDetails"][0]["page"] > 0
     assert data["sourceDetails"][0]["id"] in data["sources"]
 
-    chart = client.get(f"/api/books/{book['id']}/chapters/{ch['id']}").json()
-    paragraph_ids = {seg["id"] for p in chart["paragraphs"] for seg in p.get("segs", [])}
-    assert set(data["sources"]) <= paragraph_ids
+    # 依据必须是真的段落 id（反幻觉），但不再限定本章——检索覆盖全书
+    assert set(data["sources"]) <= _book_paragraph_ids(client, book)
 
 
 def test_vector_search_receives_current_chapter_allowlist(app, demo_pdf_bytes):
@@ -265,7 +273,13 @@ def test_ask_expands_to_other_chapters(client, demo_pdf_bytes):
     assert detail["page"] > 0
 
 
-def test_ask_stays_in_chapter_when_chapter_has_evidence(client, demo_pdf_bytes):
+def test_ask_prefers_current_chapter_but_searches_the_whole_book(client, demo_pdf_bytes):
+    """本章命中的段落排最前，但依据不限于本章。
+
+    旧行为是「本章够用就不查全书」，那正是「拿不到定义」的根因：教材常把总述与定义
+    放在靠前的总论章，停在第一处命中就永远读不到它。现在每次都查全书，本章只是加权——
+    加权提高排序，不排除别章。
+    """
     book = _upload(client, demo_pdf_bytes)
     chapter = book["chapters"][0]
 
@@ -274,8 +288,9 @@ def test_ask_stays_in_chapter_when_chapter_has_evidence(client, demo_pdf_bytes):
         json={"question": "极限是什么？", "bookId": book["id"], "chapterId": chapter["id"]},
     ).json()
 
-    assert data["scope"] == "chapter"
-    assert all(item["chapterId"] == chapter["id"] for item in data["sourceDetails"])
+    assert data["sourceDetails"][0]["chapterId"] == chapter["id"], "本章就讲了，应排第一"
+    assert data["scope"] == "book"
+    assert {item["chapterId"] for item in data["sourceDetails"]} > {chapter["id"]}
 
 
 @pytest.mark.xfail(
@@ -343,12 +358,7 @@ def test_ask_stream_emits_meta_delta_done(client, demo_pdf_bytes):
     # 逐块内容拼起来就是最终回答
     assert "".join(data["text"] for event, data in frames if event == "delta") == done["answer"]
     assert done["sources"]
-    paragraph_ids = {
-        seg["id"]
-        for para in client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()["paragraphs"]
-        for seg in para.get("segs", [])
-    }
-    assert set(done["sources"]) <= paragraph_ids
+    assert set(done["sources"]) <= _book_paragraph_ids(client, book)
 
 
 def test_ask_stream_reports_no_evidence(client, demo_pdf_bytes):
@@ -478,12 +488,25 @@ def test_ask_stream_with_thread_persists_answer(client, demo_pdf_bytes):
     assert stored["messages"][1]["text"] == done["answer"]
 
 
-def test_thread_question_uses_thread_chapter_for_retrieval(client, demo_pdf_bytes):
-    """线程绑在第 2 章：即使请求里带的是第 1 章，也按线程所属章节检索。"""
+def test_thread_question_uses_thread_chapter_for_retrieval(app, client, demo_pdf_bytes, monkeypatch):
+    """线程绑在第 2 章：即使请求里带的是第 1 章，也以线程所属章节为「本章」。
+
+    全书检索里「本章」决定了加权落在谁头上，所以这条接线仍然要钉住——直接看传进
+    检索的那个 chapter_id，比隔着排序去猜更可靠。
+    """
     book = _upload(client, demo_pdf_bytes)
     first, second = book["chapters"][0], book["chapters"][1]
     thread = _create_thread(client, book, second["id"], selectedText="比值 Δy / Δx 的极限存在")
 
+    retrieval = app.state.retrieval
+    seen = {}
+    original = retrieval.search_book
+
+    def spy(book_id, chapter_id, query, **kwargs):
+        seen["chapter_id"] = chapter_id
+        return original(book_id, chapter_id, query, **kwargs)
+
+    monkeypatch.setattr(retrieval, "search_book", spy)
     data = client.post(
         "/api/ask",
         json={
@@ -493,9 +516,10 @@ def test_thread_question_uses_thread_chapter_for_retrieval(client, demo_pdf_byte
             "threadId": thread["id"],
         },
     ).json()
+    monkeypatch.undo()
 
-    assert data["scope"] == "chapter"
-    assert all(item["chapterId"] == second["id"] for item in data["sourceDetails"])
+    assert seen["chapter_id"] == second["id"]
+    assert data["sourceDetails"][0]["chapterId"] == second["id"], "第 2 章既被加权也确实更相关"
 
 
 def test_ask_with_unknown_thread_404(client, demo_pdf_bytes):

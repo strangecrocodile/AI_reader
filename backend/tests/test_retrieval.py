@@ -1,4 +1,4 @@
-"""检索服务测试：本章优先、必要时跨章扩展、命中带章节信息。"""
+"""检索服务测试：本章内检索 vs 全书检索（本章加权）、命中带章节信息。"""
 import pytest
 
 from app.config import Settings
@@ -8,6 +8,9 @@ from app.rag.retrieval import NO_EVIDENCE_THRESHOLD, RRF_K, RetrievalService
 BOOK_ID = "b1"
 CH1 = "b1-ch1"
 CH2 = "b1-ch2"
+#: 两章各放一句**完全相同**的段落，用来验证全书检索里「本章优先」：
+#: BM25 打分一样时，只有 `CHAPTER_BOOST` 能决定谁排前面。
+SHARED_SENTENCE = "本节的重点概念都会先给出定义，再举例说明。"
 
 
 @pytest.fixture
@@ -47,10 +50,12 @@ def retrieval(tmp_path, monkeypatch):
         CH1: [
             "函数的定义是：对每个 x 都有唯一的 y 与之对应。",
             "极限描述的是趋势，而不是某一个具体取值。",
+            SHARED_SENTENCE,
         ],
         CH2: [
             "比值 Δy / Δx 称为平均变化率，它衡量一段区间的整体表现。",
             "让 Δx 趋于零，平均变化率趋近的那个数就定义为导数。",
+            SHARED_SENTENCE,
         ],
     }
     sections = []
@@ -79,19 +84,51 @@ def test_chapter_search_keeps_chapter_id(retrieval):
     assert hits[0]["coverage"] >= NO_EVIDENCE_THRESHOLD
 
 
-def test_scoped_search_stays_in_chapter_when_evidence_is_local(retrieval):
-    result = retrieval.search_scoped(BOOK_ID, CH1, "极限是什么")
+def test_book_search_reaches_other_chapters_even_when_current_chapter_matches(retrieval):
+    """本章命中 ≠ 只给本章——这正是「拿不到定义」的根因。
 
+    教材把定义放在总论章、把例题放在具体章节是常态。旧做法（本章够了就不查全书）
+    在命中本章的那一刻就停手，模型于是永远看不到那一章的定义。这里要求：本章命中的
+    同时，其它章节真正相关的段落照样进结果。
+    """
+    result = retrieval.search_book(BOOK_ID, CH1, "函数的定义是什么")
+
+    assert {hit["chapter_id"] for hit in result["hits"]} == {CH1, CH2}
+    assert result["hits"][0]["chapter_id"] == CH1, "本章相关度最高，仍应排第一"
+    assert result["scope"] == "book"
+
+
+def test_book_search_prefers_current_chapter_on_ties(retrieval):
+    """两章有同样的句子时本章排前面——加权只影响排序，不排除别章。"""
+    result = retrieval.search_book(BOOK_ID, CH2, SHARED_SENTENCE)
+
+    assert result["hits"][0]["chapter_id"] == CH2
+    assert {hit["chapter_id"] for hit in result["hits"]} == {CH1, CH2}
+
+
+def test_chapter_boost_cannot_outrank_a_clearly_better_other_chapter_hit(retrieval):
+    """加权是「分数接近时本章优先」，不是「本章说了算」。
+
+    加权加在 BM25 原始分上、排名次之前，所以 1.35 倍越不过数量级的差距：这里拿第 2 章
+    当加权章，可问「函数的定义」时第 2 章只有「定义」一个词命中，第 1 章整句都在讲定义，
+    加权后第 1 章照样排第一。
+
+    若哪天把加权挪到 RRF 融合分上，这条会失败——RRF 分被压缩在 `1/(60+名次)`，
+    同一个 1.35 会变成几十名的提前量（见 `CHAPTER_BOOST` 的常量注释）。
+    """
+    result = retrieval.search_book(BOOK_ID, CH2, "函数的定义是什么")
+
+    assert result["hits"][0]["chapter_id"] == CH1, "明显更相关的别章段落不该被本章加权挤下去"
+    assert result["scope"] == "book"
+
+
+def test_book_search_scope_is_chapter_when_hits_are_all_local(retrieval):
+    """全落本章时 scope 报 chapter，前端据此不提示「含其他章节」。"""
+    result = retrieval.search_book(BOOK_ID, CH1, "极限是什么")
+
+    assert result["hits"]
     assert result["scope"] == "chapter"
     assert all(hit["chapter_id"] == CH1 for hit in result["hits"])
-
-
-def test_scoped_search_expands_to_other_chapters_when_chapter_is_silent(retrieval):
-    result = retrieval.search_scoped(BOOK_ID, CH1, "平均变化率是什么")
-
-    assert result["scope"] == "book"
-    assert result["hits"]
-    assert result["hits"][0]["chapter_id"] == CH2, "本章没讲，应回退到第 2 章的证据"
     assert result["hits"][0]["coverage"] >= NO_EVIDENCE_THRESHOLD
 
 
@@ -134,19 +171,27 @@ def test_fusion_skips_the_vector_channel_when_disabled(retrieval):
     assert hits
 
 
-def test_scoped_search_returns_empty_when_nothing_matches(retrieval):
-    result = retrieval.search_scoped(BOOK_ID, CH1, "今天晚上的月亮有多圆")
+def test_book_search_returns_empty_when_nothing_matches(retrieval):
+    result = retrieval.search_book(BOOK_ID, CH1, "今天晚上的月亮有多圆")
 
     assert result["hits"] == []
 
 
+def test_book_search_crosses_chapters_when_current_chapter_is_silent(retrieval):
+    result = retrieval.search_book(BOOK_ID, CH1, "平均变化率是什么")
+
+    assert result["hits"][0]["chapter_id"] == CH2, "本章没讲，命中应来自第 2 章"
+    assert result["hits"][0]["coverage"] >= NO_EVIDENCE_THRESHOLD
+    assert result["scope"] == "book"
+
+
 def test_invalidate_book_clears_caches(retrieval):
-    # 本章无依据的提问才会触发全书索引构建
-    retrieval.search_scoped(BOOK_ID, CH1, "平均变化率是什么")
-    assert retrieval._bm25_cache and retrieval._book_cache
+    # 全书检索建的是全书索引（_book_cache），不碰按章建的 _bm25_cache
+    retrieval.search_book(BOOK_ID, CH1, "平均变化率是什么")
+    assert retrieval._book_cache
+    assert not retrieval._bm25_cache
 
     retrieval.invalidate_book(BOOK_ID)
 
-    assert not retrieval._bm25_cache
     assert not retrieval._book_cache
     assert BOOK_ID not in retrieval._vectors_built
