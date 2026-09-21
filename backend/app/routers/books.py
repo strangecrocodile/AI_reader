@@ -284,13 +284,23 @@ def _ask_targets(db, payload: AskRequest):
     return payload.bookId, payload.chapterId, None
 
 
+def _anchor_of(thread) -> str:
+    """线程绑定的锚点 id——划词选中的那段原文。
+
+    划词追问的上下文就是它：带着它检索才能把用户指着的那段原文作为第一条证据，
+    而不是只拿问题去猜该引用哪一段（见 `services/ask._retrieve`）。
+    """
+    return (thread or {}).get("anchorId") or ""
+
+
 @router.post("/api/ask")
 def ask(payload: AskRequest, request: Request):
     db, llm, retrieval, _ = _state(request)
     book_id, chapter_id, thread = _ask_targets(db, payload)
     return answer_question(
         db, retrieval, llm, book_id, chapter_id,
-        payload.question, payload.selectedText or "", thread=thread,
+        payload.question, payload.selectedText or "",
+        thread=thread, anchor_id=_anchor_of(thread),
     )
 
 
@@ -305,7 +315,8 @@ def ask_stream(payload: AskRequest, request: Request):
 
     events = stream_answer(
         db, retrieval, llm, book_id, chapter_id,
-        payload.question, payload.selectedText or "", thread=thread,
+        payload.question, payload.selectedText or "",
+        thread=thread, anchor_id=_anchor_of(thread),
     )
 
     def frames():

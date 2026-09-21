@@ -524,7 +524,7 @@ describe('划词问答', () => {
     await user.type(screen.getByLabelText('提问输入框'), '导数的定义是什么？');
     await user.click(screen.getByRole('button', { name: '提问' }));
 
-    await waitFor(() => expect(screen.getByText(/本章依据不足，已扩展到全书检索/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/依据取自全书，含其他章节的段落/)).toBeInTheDocument());
     const chip = await screen.findByRole('button', { name: /微分中值定理 · 第 47 页/ });
     await user.click(chip);
 
