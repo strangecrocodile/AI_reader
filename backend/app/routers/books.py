@@ -20,6 +20,7 @@ from ..services.ingest import (
     PDF,
     SOURCE_MEDIA_TYPES,
     SUPPORTED_MESSAGE,
+    delete_book_files,
     detect_format,
     ingest_file_bytes,
     source_path_of,
@@ -159,17 +160,23 @@ def get_book_source(book_id: str, request: Request):
 
 @router.delete("/api/books/{book_id}", status_code=204)
 def delete_book(book_id: str, request: Request):
-    """删除教材及其全部下游数据（章节、段落、锚点、讲解、进度、追问线程）。
+    """删除教材及其全部下游数据（章节、段落、锚点、讲解、进度、追问线程）
+    **以及磁盘上留存的原文件与抽出的插图**。
 
     **不可恢复**，也是唯一会丢弃 OCR 结果的操作——扫描件删掉就得重新识别几十分钟。
     所以 404 与 204 的语义要严格：前者表示这本教材本来就不存在，后者才是真的删了。
     """
-    db, _, retrieval, _ = _state(request)
-    if not db.get_book(book_id):
+    db, _, retrieval, settings = _state(request)
+    book = db.get_book(book_id)
+    if not book:
         raise HTTPException(status_code=404, detail="教材不存在")
     db.delete_book(book_id)
     # 检索缓存里还留着这本书的 BM25 索引与向量，不清理的话「已删教材」仍会被检索命中
     retrieval.invalidate_book(book_id)
+    # 行删完了再删字节。以前只删行，`data/sources` 与 `data/assets` 里的文件原样
+    # 留着：一本 300 页扫描件几十 MB，用户以为删干净了，磁盘上却越积越多——
+    # 而且那些是他人教材的副本，留着还有合规含义（见 services/ingest.delete_book_files）。
+    delete_book_files(book, settings)
     return None
 
 

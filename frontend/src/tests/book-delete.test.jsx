@@ -88,6 +88,8 @@ describe('删除教材', () => {
     expect(message).toContain('线性代数');
     expect(message).toContain('无法恢复');
     expect(message).toContain('个章节');
+    // 后端会把留存的原文件与插图一起删掉，文案要跟得上，别让用户以为只清了记录
+    expect(message).toContain('原文件');
     // 扫描件是唯一「删了要再等几十分钟」的东西，必须提前说
     expect(message).toContain('重新识别');
   });

@@ -344,7 +344,8 @@ export default function BookModal({ open, onClose }) {
     const name = [book.title, book.edition].filter(Boolean).join(' · ');
     const ok = window.confirm(
       `确定删除《${name}》吗？\n\n` +
-        `它的 ${book.chapters.length} 个章节、原文段落、AI 讲解和学习进度会一并删除，无法恢复。` +
+        `它的 ${book.chapters.length} 个章节、原文段落、AI 讲解、学习进度，` +
+        `以及上传时留存的原文件与抽出的插图，都会一并删除，无法恢复。` +
         `如果这是扫描件教材，再想看得重新上传并重新识别。`,
     );
     if (!ok) return;

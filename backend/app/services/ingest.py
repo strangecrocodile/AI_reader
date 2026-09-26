@@ -6,6 +6,7 @@
 
 `.doc` 是特例：它要先经 LibreOffice 转成 .docx 才能读（见 services/legacy_doc）。
 """
+import logging
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,6 +16,8 @@ from ..parsing.docx import parse_docx_bytes
 from ..parsing.pdf import parse_pdf_stream
 from ..parsing.text import parse_text_bytes
 from . import legacy_doc
+
+logger = logging.getLogger(__name__)
 
 PDF = "pdf"
 DOCX = "docx"
@@ -291,6 +294,52 @@ def source_path_of(db: Database, book: Dict[str, Any], settings) -> Optional[Pat
         return None
     path = Path(settings.sources_dir) / name
     return path if path.is_file() else None
+
+
+def delete_book_files(book: Dict[str, Any], settings) -> int:
+    """删掉这本教材在磁盘上的原文件与抽出的插图，返回删掉的文件数。
+
+    **数据库行由调用方负责，且必须在删行之后调用**（见 `routers/books.py`）。
+    顺序不能反：万一删文件失败，留下的是没有任何记录指向的孤儿文件；反过来先删
+    文件的话，库里会留一本「有记录、文件却没了」的教材，用户点「下载原文件」
+    拿到 404——后者更难解释，也没有补救动作。
+
+    只删这本书自己的东西：
+
+    - 原文件按库里记的 basename 取，并沿用 `source_path_of` 的目录穿越防御；
+    - 插图按 `{book_id}-` 前缀认（命名见 `parsing/assets.py`）。`book_id` 是定长
+      8 位十六进制，不可能成为另一本的前缀，所以前缀匹配不会误伤。
+
+    删不掉（文件已不在、被占用、权限不足）都只是记一条 warning 并继续：用户点的是
+    「删除这本教材」，字节残留不该让它变成一次失败的操作。
+    """
+    removed = 0
+    book_id = str(book.get("id") or "")
+
+    sources_dir = Path(getattr(settings, "sources_dir", "") or ".")
+    name = Path(book.get("source_name") or "").name
+    if name and sources_dir.is_dir():
+        removed += _unlink(sources_dir / name)
+
+    assets_dir = Path(getattr(settings, "assets_dir", "") or ".")
+    if book_id and assets_dir.is_dir():
+        prefix = f"{book_id}-"
+        for path in assets_dir.iterdir():
+            if path.is_file() and path.name.startswith(prefix):
+                removed += _unlink(path)
+    return removed
+
+
+def _unlink(path: Path) -> int:
+    """删一个文件并返回个数（0 表示本来就不在）。不抛异常，理由见上方。"""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return 0
+    except OSError as exc:
+        logger.warning("删除教材文件失败，已跳过：%s（%s）", path, exc)
+        return 0
+    return 1
 
 
 def _now() -> str:
