@@ -3,6 +3,10 @@
 __pycache__/
 *.py[cod]
 
+# 探测 langchain 是否可用时临时装的依赖环境（2296 个文件 / 35 MB），
+# 是这台机器上的探测产物，不是项目依赖。
+.probe_lc/
+
 # ---- 构建/缓存 ----
 .pytest_cache/
 .mypy_cache/

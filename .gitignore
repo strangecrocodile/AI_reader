@@ -43,7 +43,9 @@ Thumbs.db
 __pycache__/
 *.pyc
 .pytest_cache/
-backend/.venv/
+# 虚拟环境一律忽略。原来这里写的是 `backend/.venv/`（当时唯一的那个），
+# 改成通用模式：以后任何位置新增 venv 都不用再补一条路径规则。
+.venv/
 backend/.pip-cache/
 backend/data/
 # pytest 临时目录（basetemp 见 backend/pytest.ini）
