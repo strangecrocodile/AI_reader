@@ -2,6 +2,12 @@ import { books, studyContents } from '../data/books.js';
 import { knowledgeFor } from '../data/knowledge.js';
 import { answerFor } from './mockAnswers.js';
 import { recordLocalEvent } from './progress.js';
+import {
+  createLocalNote,
+  deleteLocalNote,
+  listLocalNotes,
+  updateLocalNote,
+} from './notes.js';
 import { appendLocalMessage, createLocalThread, deleteLocalThread, listLocalThreads } from './threads.js';
 
 /**
@@ -414,6 +420,60 @@ export const api = {
       return;
     }
     deleteLocalThread(threadId);
+  },
+
+  // ---------- 笔记 ----------
+
+  /**
+   * 本章笔记，最近更新的在前。
+   *
+   * 笔记绑的是**段落锚点**（和溯源问答同一套坐标），所以「回到这条笔记对应的原文」
+   * 永远跳得准；页码会随版本与解析方式变化，锚点不会。
+   */
+  async fetchNotes(bookId, chapterId) {
+    if (useBackend()) {
+      return request(`/api/books/${bookId}/chapters/${chapterId}/notes`);
+    }
+    await delay(60);
+    return listLocalNotes(bookId, chapterId);
+  },
+
+  /** 新建笔记。`anchorId` 为空表示整章感想（不绑定具体段落）。 */
+  async createNote({ bookId, chapterId, anchorId = '', quotedText = '', body }) {
+    if (useBackend()) {
+      const res = await fetch(`${apiBase}/api/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookId, chapterId, anchorId, quotedText, body }),
+      });
+      if (!res.ok) throw new Error(await failureDetail(res, `记笔记失败（${res.status}）`));
+      return res.json();
+    }
+    return createLocalNote({ bookId, chapterId, anchorId, quotedText, body });
+  },
+
+  /** 改笔记正文。锚点是笔记的身份，后端不允许改，这里也就不提供这个参数。 */
+  async updateNote(noteId, body) {
+    if (useBackend()) {
+      const res = await fetch(`${apiBase}/api/notes/${noteId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      if (!res.ok) throw new Error(await failureDetail(res, `更新笔记失败（${res.status}）`));
+      return res.json();
+    }
+    return updateLocalNote(noteId, body);
+  },
+
+  /** 删除笔记。 */
+  async deleteNote(noteId) {
+    if (useBackend()) {
+      const res = await fetch(`${apiBase}/api/notes/${noteId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`API ${res.status}: /api/notes/${noteId}`);
+      return;
+    }
+    deleteLocalNote(noteId);
   },
 };
 

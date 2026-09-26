@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Reader, { PAGE_MODE, SCROLL_MODE } from '../components/Reader.jsx';
 import CoachPanel from '../components/CoachPanel.jsx';
@@ -54,6 +54,7 @@ export default function StudyPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [selected, setSelected] = useState(null);
   const [threads, setThreads] = useState([]);
+  const [notes, setNotes] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [bubbleOpen, setBubbleOpen] = useState(false);
   const [bubbleRect, setBubbleRect] = useState(null);
@@ -88,6 +89,7 @@ export default function StudyPage() {
     setSelected(null);
     setProgress(null);
     setThreads([]);
+    setNotes([]);
     setActiveThreadId(null);
     setBubbleOpen(false);
 
@@ -113,6 +115,12 @@ export default function StudyPage() {
         .fetchThreads(bookId, chapterId)
         .then((list) => {
           if (!cancelled && Array.isArray(list)) setThreads(list);
+        })
+        .catch(() => {});
+      api
+        .fetchNotes(bookId, chapterId)
+        .then((list) => {
+          if (!cancelled && Array.isArray(list)) setNotes(list);
         })
         .catch(() => {});
     })();
@@ -375,6 +383,63 @@ export default function StudyPage() {
     [activeThreadId, toast],
   );
 
+  // ---------- 笔记 ----------
+
+  /**
+   * 记一条笔记。返回 false 表示没存上——`AskBox` 据此决定要不要清空草稿：
+   * 存失败还把用户刚写的东西清掉，是最气人的那种失败。
+   */
+  const handleCreateNote = useCallback(
+    async ({ anchorId, quotedText, body }) => {
+      try {
+        const created = await api.createNote({ bookId, chapterId, anchorId, quotedText, body });
+        setNotes((prev) => [created, ...prev]);
+        // 记完顺手清掉选中：用户已经把它变成笔记了，再挂着选中状态只会让人以为没成功
+        setSelected(null);
+        toast('已记下这条笔记');
+        return true;
+      } catch (error) {
+        toast(error.message || '笔记没能保存，请稍后重试');
+        return false;
+      }
+    },
+    [bookId, chapterId, toast],
+  );
+
+  const handleUpdateNote = useCallback(
+    async (noteId, body) => {
+      try {
+        const updated = await api.updateNote(noteId, body);
+        setNotes((prev) => prev.map((note) => (note.id === noteId ? updated : note)));
+        toast('笔记已更新');
+        return true;
+      } catch (error) {
+        toast(error.message || '笔记更新失败，请稍后重试');
+        return false;
+      }
+    },
+    [toast],
+  );
+
+  const handleDeleteNote = useCallback(
+    async (noteId) => {
+      try {
+        await api.deleteNote(noteId);
+      } catch {
+        toast('笔记删除失败，请稍后重试');
+        return;
+      }
+      setNotes((prev) => prev.filter((note) => note.id !== noteId));
+    },
+    [toast],
+  );
+
+  /** 哪些段落已经记过笔记——阅读区据此在段旁点一个记号。 */
+  const notedAnchorIds = useMemo(
+    () => new Set(notes.map((note) => note.anchorId).filter(Boolean)),
+    [notes],
+  );
+
   /** 切换到另一章（顶部章节导航）。跨章定位原文走 handleOpenSource。 */
   const handleSelectChapter = useCallback(
     (id) => {
@@ -446,6 +511,7 @@ export default function StudyPage() {
           currentChapterId={chapterId}
           onSelectChapter={handleSelectChapter}
           onOpenSource={handleOpenSource}
+          notedAnchorIds={notedAnchorIds}
           viewMode={viewMode}
           onViewModeChange={handleViewModeChange}
         />
@@ -456,11 +522,15 @@ export default function StudyPage() {
           asking={asking}
           selected={selected}
           progress={progress}
+          notes={notes}
           onAsk={handleAsk}
           onComplete={handleComplete}
           onSelectThread={handleSelectThread}
           onDeleteThread={handleDeleteThread}
           onOpenSource={handleOpenSource}
+          onCreateNote={handleCreateNote}
+          onUpdateNote={handleUpdateNote}
+          onDeleteNote={handleDeleteNote}
           clearSelected={clearSelected}
           onFocusSource={focusSource}
         />

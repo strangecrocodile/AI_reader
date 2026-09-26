@@ -8,10 +8,11 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from ..models import AskRequest, EventRequest, ProgressRequest, ThreadRequest
+from ..models import AskRequest, EventRequest, NoteRequest, NoteUpdateRequest, ProgressRequest, ThreadRequest
 from ..parsing.pdf import probe_pdf
 from ..serializers import book_meta, chapter_content
 from ..services import legacy_doc
+from ..services import notes as notes_service
 from ..services import threads as thread_service
 from ..services.ask import answer_question, stream_answer
 from ..services.export import export_book_markdown
@@ -409,3 +410,61 @@ def regenerate_plan(book_id: str, request: Request):
     from ..services.plan import get_plan
 
     return get_plan(db, llm, book, db.chapters_of(book_id), force=True)
+
+
+# ---------- 笔记 ----------
+
+
+@router.post("/api/notes", status_code=201)
+def create_note(payload: NoteRequest, request: Request):
+    """新建一条笔记，绑定一段原文（锚点）。"""
+    db, _, _, _ = _state(request)
+    if not db.get_book(payload.bookId):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    if not db.get_chapter(payload.bookId, payload.chapterId):
+        raise HTTPException(status_code=404, detail="章节不存在")
+    try:
+        return notes_service.create_note(
+            db, payload.bookId, payload.chapterId, payload.anchorId, payload.quotedText, payload.body
+        )
+    except notes_service.NoteError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.get("/api/books/{book_id}/notes")
+def list_book_notes(book_id: str, request: Request):
+    """整本书的笔记（带章节标题），供「我的笔记」列表用。"""
+    db, _, _, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    return notes_service.list_book_notes(db, book_id)
+
+
+@router.get("/api/books/{book_id}/chapters/{chapter_id}/notes")
+def list_chapter_notes(book_id: str, chapter_id: str, request: Request):
+    """本章笔记，最近更新的在前。"""
+    db, _, _, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    return notes_service.list_notes(db, book_id, chapter_id)
+
+
+@router.patch("/api/notes/{note_id}")
+def update_note(note_id: str, payload: NoteUpdateRequest, request: Request):
+    """只改正文。笔记绑定的原文位置是它的身份，改掉就失去意义了。"""
+    db, _, _, _ = _state(request)
+    try:
+        updated = notes_service.update_note(db, note_id, payload.body)
+    except notes_service.NoteError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    if not updated:
+        raise HTTPException(status_code=404, detail="笔记不存在")
+    return updated
+
+
+@router.delete("/api/notes/{note_id}", status_code=204)
+def delete_note(note_id: str, request: Request):
+    db, _, _, _ = _state(request)
+    if not notes_service.delete_note(db, note_id):
+        raise HTTPException(status_code=404, detail="笔记不存在")
+    return None

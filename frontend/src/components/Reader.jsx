@@ -43,6 +43,7 @@ export default function Reader({
   currentChapterId,
   onSelectChapter,
   onOpenSource,
+  notedAnchorIds,
   viewMode = SCROLL_MODE,
   onViewModeChange,
 }) {
@@ -240,7 +241,15 @@ export default function Reader({
             style={bodyShift ? { transform: `translateY(${bodyShift}px)` } : undefined}
           >
             {paragraphs.map((para, i) => (
-              <Paragraph key={i} para={para} index={i} focusId={focusId} />
+              <Paragraph
+                key={i}
+                para={para}
+                index={i}
+                focusId={focusId}
+                // 锚点 id 必须走 anchorIdOf：正文段落的锚点藏在 segs 里，`para.id` 是空的，
+                // 用它判断会让所有文字段落的笔记记号都不显示
+                noted={Boolean(notedAnchorIds?.has(anchorIdOf(para)))}
+              />
             ))}
           </div>
         </div>
@@ -277,8 +286,15 @@ export default function Reader({
  * 每个块的根元素都必须带 `data-block-index`——分页装箱是按这些元素**实测的
  * 位置**算的（见 utils/pagination.js），漏一个就会让后续页码整体错位。
  * 类型未知时退回按段落渲染，老数据与将来新增的类型都不会白屏。
+ *
+ * `noted` 表示这一段有用户笔记，会在段首点一个记号。记号刻意放在锚点 `<span>`
+ * **外面**：放进去会被算进划词选中的文本里，用户复制原文时会莫名多出一个符号。
  */
-function Paragraph({ para, index, focusId }) {
+function Paragraph({ para, index, focusId, noted }) {
+  const mark = noted ? (
+    <span className="note-mark" data-testid={`note-mark-${anchorIdOf(para)}`} title="这一段有你记的笔记" />
+  ) : null;
+
   if (para.type === 'formula') {
     return (
       <p className="formula-line" data-block-index={index}>
@@ -292,6 +308,7 @@ function Paragraph({ para, index, focusId }) {
   if (para.type === 'image') {
     return (
       <figure className="paper-figure" data-block-index={index} data-source-id={para.id}>
+        {mark}
         {para.src ? <img src={para.src} alt={para.caption || '教材插图'} loading="lazy" /> : null}
         {para.caption ? <figcaption>{para.caption}</figcaption> : null}
       </figure>
@@ -301,6 +318,7 @@ function Paragraph({ para, index, focusId }) {
   if (para.type === 'table') {
     return (
       <div className="paper-table" data-block-index={index} data-source-id={para.id}>
+        {mark}
         <table>
           <tbody>
             {(para.rows ?? []).map((row, r) => (
@@ -321,10 +339,23 @@ function Paragraph({ para, index, focusId }) {
   }
 
   return (
-    <p data-block-index={index}>
+    <p data-block-index={index} className={noted ? 'noted' : undefined}>
+      {mark}
       <SegmentText segs={para.segs} focusId={focusId} />
     </p>
   );
+}
+
+/**
+ * 一个块对应的原文锚点 id。
+ *
+ * 段落把锚点放在最内层的 `src` 片段上（见 SegmentText），插图/表格则直接是 `para.id`。
+ * 笔记就是按这个 id 绑定的，所以这里取错会让「这一段有笔记」的记号点错地方。
+ */
+function anchorIdOf(para) {
+  if (para.type === 'image' || para.type === 'table') return para.id ?? '';
+  const seg = (para.segs ?? []).find((item) => item && item.t === 'src');
+  return seg?.id ?? '';
 }
 
 /** 两次测量结果是否一致（1px 内视为没变），避免无谓地重新装箱。 */

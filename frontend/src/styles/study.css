@@ -930,6 +930,146 @@
   display: none;
 }
 
+/* ---------- 笔记 ---------- */
+/* 段首的笔记记号。绝对定位到左侧留白里，不占正文行内空间——否则每段有笔记的
+   文字都会被迫右移一点，读起来是断的。 */
+.note-mark {
+  position: absolute;
+  left: -18px;
+  top: 0.55em;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff9500;
+}
+
+.paper-body-inner > p,
+.paper-body-inner > .paper-figure,
+.paper-body-inner > .paper-table {
+  position: relative;
+}
+
+.note-list {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.note-list ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.note-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  border-radius: 10px;
+  padding: 4px 6px;
+}
+
+.note-item:hover {
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.note-open {
+  flex: 1;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.note-quote {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.note-body {
+  display: block;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.note-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.note-actions button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 5px;
+  font-size: 13px;
+}
+
+.note-actions button:hover {
+  color: var(--ink);
+}
+
+.note-edit textarea,
+.note-compose textarea {
+  width: 100%;
+  min-height: 76px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.note-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.note-edit-actions button {
+  border: 0;
+  border-radius: 9px;
+  background: var(--green);
+  color: white;
+  font-weight: 700;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+
+.note-edit-actions button.ghost {
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.note-edit-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 「记笔记」跟着「已选原文」出现：用户此刻正看着自己选中的那段话 */
+.note-start {
+  margin-left: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--ink);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.note-compose {
+  margin-top: 8px;
+}
+
 /* ---------- 全书搜索 ---------- */
 .book-search {
   position: relative;

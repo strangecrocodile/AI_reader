@@ -110,6 +110,18 @@ CREATE TABLE IF NOT EXISTS ocr_tasks (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS notes (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  anchor_id TEXT NOT NULL DEFAULT '',
+  quoted_text TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notes_chapter ON notes(book_id, chapter_id);
+CREATE INDEX IF NOT EXISTS idx_notes_anchor ON notes(anchor_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(book_id, chapter_id);
 CREATE INDEX IF NOT EXISTS idx_progress_book ON chapter_progress(book_id);
@@ -356,6 +368,7 @@ class Database:
             )
             for table in (
                 "threads",
+                "notes",
                 "learning_events",
                 "concepts",
                 "chapter_progress",
@@ -544,6 +557,58 @@ class Database:
                 (book_id, chapter_id),
             ).fetchone()
             return {"payload": json.loads(row["payload"]), "model": row["model"]} if row else None
+
+    # ---------- 笔记 ----------
+    def add_note(self, note: Dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO notes(id,book_id,chapter_id,anchor_id,quoted_text,body,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    note["id"],
+                    note["book_id"],
+                    note["chapter_id"],
+                    note.get("anchor_id", ""),
+                    note.get("quoted_text", ""),
+                    note.get("body", ""),
+                    note["created_at"],
+                    note.get("updated_at", note["created_at"]),
+                ),
+            )
+
+    def get_note(self, note_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+            return dict(row) if row else None
+
+    def notes_of_chapter(self, book_id: str, chapter_id: str) -> List[Dict[str, Any]]:
+        """本章笔记，最近更新的在前。"""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM notes WHERE book_id=? AND chapter_id=? ORDER BY updated_at DESC, rowid DESC",
+                (book_id, chapter_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def notes_of_book(self, book_id: str) -> List[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM notes WHERE book_id=? ORDER BY updated_at DESC, rowid DESC",
+                (book_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_note(self, note_id: str, body: str) -> Optional[Dict[str, Any]]:
+        """只允许改正文。笔记绑定的原文位置是它的身份，不该被改掉。"""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE notes SET body=?, updated_at=? WHERE id=?", (body, _now(), note_id)
+            )
+        return self.get_note(note_id)
+
+    def delete_note(self, note_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
 
     # ---------- 追问线程 ----------
     def add_thread(self, thread: Dict[str, Any]) -> None:

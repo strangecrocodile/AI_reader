@@ -12,11 +12,15 @@ export default function CoachPanel({
   asking,
   selected,
   progress,
+  notes = [],
   onAsk,
   onComplete,
   onSelectThread,
   onDeleteThread,
   onOpenSource,
+  onCreateNote,
+  onUpdateNote,
+  onDeleteNote,
   clearSelected,
   onFocusSource,
 }) {
@@ -76,6 +80,12 @@ export default function CoachPanel({
           </div>
         )}
         <ThreadList threads={threads} activeId={thread?.id} onSelect={onSelectThread} onDelete={onDeleteThread} />
+        <NotesList
+          notes={notes}
+          onFocus={onFocusSource}
+          onUpdate={onUpdateNote}
+          onDelete={onDeleteNote}
+        />
         <Chat chat={thread?.messages ?? []} onOpenSource={onOpenSource} />
       </div>
       <AskBox
@@ -83,9 +93,99 @@ export default function CoachPanel({
         thread={thread}
         asking={asking}
         onAsk={onAsk}
+        onCreateNote={onCreateNote}
         onClear={clearSelected}
       />
     </aside>
+  );
+}
+
+/**
+ * 本章笔记：点一条回到它对应的原文，可改可删。
+ *
+ * 笔记与追问线程分开列：一个是「我问过什么」，一个是「我记下了什么」，
+ * 混在一张列表里，用户得逐条读才知道哪条是哪个。
+ */
+export function NotesList({ notes = [], onFocus, onUpdate, onDelete }) {
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState('');
+
+  if (notes.length === 0) return null;
+
+  const startEdit = (note) => {
+    setEditingId(note.id);
+    setDraft(note.body);
+  };
+
+  const save = async (noteId) => {
+    const text = draft.trim();
+    if (!text) return;
+    await onUpdate?.(noteId, text);
+    setEditingId(null);
+  };
+
+  return (
+    <div className="note-list" data-testid="note-list">
+      <div className="thread-list-head">
+        <span>我的笔记</span>
+        <span>{notes.length} 条</span>
+      </div>
+      <ul>
+        {notes.map((note) => (
+          <li key={note.id} className="note-item">
+            {editingId === note.id ? (
+              <div className="note-edit">
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  aria-label="编辑笔记内容"
+                />
+                <div className="note-edit-actions">
+                  <button type="button" onClick={() => save(note.id)}>
+                    保存
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setEditingId(null)}>
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="note-open"
+                  data-testid={`note-${note.id}`}
+                  onClick={() => onFocus?.(note.anchorId, '已定位到这条笔记对应的原文')}
+                >
+                  {note.quotedText ? (
+                    <span className="note-quote">「{note.quotedText}」</span>
+                  ) : (
+                    <span className="note-quote">本章笔记</span>
+                  )}
+                  <span className="note-body">{note.body}</span>
+                </button>
+                <span className="note-actions">
+                  <button
+                    type="button"
+                    onClick={() => startEdit(note)}
+                    aria-label={`编辑笔记 ${note.body}`}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete?.(note.id)}
+                    aria-label={`删除笔记 ${note.body}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -265,15 +365,42 @@ function sourceLabel(sourceId, details = []) {
   return `教材依据 ${sourceId.replace('source-', '#')}`;
 }
 
-/** 提问框：显示已选中原文，支持回车提问。 */
-export function AskBox({ selected, thread, asking, onAsk, onClear }) {
+/**
+ * 提问框：显示已选中原文，支持回车提问；选中原文时还能直接记一条笔记。
+ *
+ * 「记笔记」放在这里而不是别处：这一行本来就写着「已选原文：…」，
+ * 用户此刻正看着自己选中的那段话，记笔记的念头也正是在这一刻出现的。
+ */
+export function AskBox({ selected, thread, asking, onAsk, onCreateNote, onClear }) {
   const [value, setValue] = useState('');
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const submit = () => {
     const q = value.trim();
     if (!q || asking) return;
     onAsk(q);
     setValue('');
+  };
+
+  const quote = selected?.text ?? '';
+  const closeNote = () => {
+    setNoteOpen(false);
+    setNoteDraft('');
+  };
+
+  const saveNote = async () => {
+    const body = noteDraft.trim();
+    if (!body || saving) return;
+    setSaving(true);
+    const ok = await onCreateNote?.({
+      anchorId: selected?.anchorId ?? '',
+      quotedText: quote,
+      body,
+    });
+    setSaving(false);
+    if (ok !== false) closeNote();
   };
 
   const placeholder = selected
@@ -286,23 +413,54 @@ export function AskBox({ selected, thread, asking, onAsk, onClear }) {
     <div className="ask-box">
       <div className={`selection-label${selected ? ' show' : ''}`} data-testid="selection-label">
         已选原文：<span>「{selected?.truncated ?? ''}」</span>
+        {/* 有选中原文时才出现：没有引用对象的笔记，位置就丢了 */}
+        {selected && !noteOpen && (
+          <button
+            className="note-start"
+            type="button"
+            data-testid="note-start"
+            onClick={() => setNoteOpen(true)}
+          >
+            记笔记
+          </button>
+        )}
         <button className="clear-selection" onClick={onClear} aria-label="清除已选原文">
           ×
         </button>
       </div>
-      <div className="ask-row">
-        <input
-          id="question"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && submit()}
-          placeholder={placeholder}
-          aria-label="提问输入框"
-        />
-        <button onClick={submit} disabled={asking}>
-          {asking ? '思考中…' : '提问'}
-        </button>
-      </div>
+      {noteOpen ? (
+        <div className="note-compose" data-testid="note-compose">
+          <textarea
+            autoFocus
+            value={noteDraft}
+            onChange={(event) => setNoteDraft(event.target.value)}
+            placeholder="为这段原文记一条笔记…"
+            aria-label="笔记内容"
+          />
+          <div className="note-edit-actions">
+            <button type="button" onClick={saveNote} disabled={saving || !noteDraft.trim()}>
+              {saving ? '保存中…' : '保存笔记'}
+            </button>
+            <button type="button" className="ghost" onClick={closeNote}>
+              取消
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="ask-row">
+          <input
+            id="question"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            placeholder={placeholder}
+            aria-label="提问输入框"
+          />
+          <button onClick={submit} disabled={asking}>
+            {asking ? '思考中…' : '提问'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

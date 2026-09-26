@@ -25,6 +25,22 @@ class ThreadRequest(BaseModel):
     selectedText: str = Field(default="", max_length=1000)
 
 
+class NoteRequest(BaseModel):
+    """新建笔记：绑定一段原文（锚点），可以没有锚点（整章感想）。"""
+
+    bookId: str
+    chapterId: str
+    anchorId: str = ""
+    quotedText: str = Field(default="", max_length=500)
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class NoteUpdateRequest(BaseModel):
+    """改笔记正文。锚点是笔记的身份，不允许改。"""
+
+    body: str = Field(min_length=1, max_length=4000)
+
+
 class ProgressRequest(BaseModel):
     status: str = Field(pattern="^(learning|learned)$")
     mastery: float = Field(ge=0, le=100)

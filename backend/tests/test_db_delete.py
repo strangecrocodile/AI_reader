@@ -73,6 +73,18 @@ def _seed(database: Database, book_id: str) -> None:
         }
     )
     database.add_thread_message(f"{book_id}-th1", "user", "为什么？")
+    database.add_note(
+        {
+            "id": f"{book_id}-n1",
+            "book_id": book_id,
+            "chapter_id": chapter_id,
+            "anchor_id": section_id,
+            "quoted_text": "第一段",
+            "body": "这里记一笔",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+    )
 
 
 @pytest.fixture
@@ -102,10 +114,11 @@ def test_delete_book_removes_events_progress_and_threads(db):
     """这几张表有外键级联，但仍然逐张确认——级联一旦被谁关掉不会有人发现。"""
     db.delete_book("drop")
 
-    for table in ("learning_events", "chapter_progress", "concepts", "threads"):
+    for table in ("learning_events", "chapter_progress", "concepts", "threads", "notes"):
         assert _count(db, table, "drop") == 0, f"{table} 里还留着已删教材的行"
     assert db.get_thread("drop-th1") is None
     assert db.thread_messages("drop-th1") == []
+    assert db.get_note("drop-n1") is None
 
 
 def test_delete_book_leaves_other_books_intact(db):
