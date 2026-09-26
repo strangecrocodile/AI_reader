@@ -20,7 +20,7 @@ export default function BookCard({ book, onSwap }) {
         <span></span>
       </div>
       <div className="book-object-wrap">
-        <div className="book-object" data-testid="book-cover" aria-label={`${book.title} ${book.edition}`}>
+        <div className="book-object" data-testid="book-cover" aria-label={[book.title, book.edition].filter(Boolean).join(' ')}>
           <div className="tiny">{cover.series}</div>
           <div className="book-title">
             {cover.lines.map((line) => (

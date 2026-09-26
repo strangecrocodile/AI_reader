@@ -12,6 +12,18 @@ const ACCEPT_BASE = '.pdf,.docx,.txt,.md,application/pdf,text/plain,text/markdow
 const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
 
 /**
+ * 列表里一行教材怎么称呼。
+ *
+ * **没有版次就不写版次**：`edition` 来自后端，而每一本导入的教材它都是空串
+ * （后端不从文档里推断版次）。这里以前兜底成字面量「第 3 版」，于是用户传任何书，
+ * 列表里都写着「第 3 版」——那是在替用户的书编造事实，比少显示一段字糟得多。
+ * 演示数据的教材自带版次（见 `data/books.js`），照常显示。
+ */
+function bookTitleOf(book) {
+  return [book.title, book.edition].filter(Boolean).join(' · ');
+}
+
+/**
  * 解析受限时给的补救建议：症状在界面上，原因多半在文档本身。
  *
  * 这里**不再**提「整本是扫描图片」：扫描件现在会自动走 OCR（见后端 upload_book 的
@@ -276,7 +288,7 @@ export default function BookModal({ open, onClose }) {
   const choose = (book) => {
     if (book.id !== currentBookId) {
       setCurrentBookId(book.id);
-      const name = [book.title, book.edition].filter(Boolean).join(' ');
+      const name = bookTitleOf(book);
       toast(`已切换为《${name}》`);
     }
     close();
@@ -341,7 +353,7 @@ export default function BookModal({ open, onClose }) {
    *    真相，本地过滤在「删到一半失败」时会显示出一本其实还在的教材。
    */
   const remove = async (book) => {
-    const name = [book.title, book.edition].filter(Boolean).join(' · ');
+    const name = bookTitleOf(book);
     const ok = window.confirm(
       `确定删除《${name}》吗？\n\n` +
         `它的 ${book.chapters.length} 个章节、原文段落、AI 讲解、学习进度，` +
@@ -422,9 +434,7 @@ export default function BookModal({ open, onClose }) {
                 onClick={() => choose(book)}
               >
                 <span>
-                  <b>
-                    {book.title} · {book.edition || '第 3 版'}
-                  </b>
+                  <b>{bookTitleOf(book)}</b>
                   <br />
                   <small>
                     {book.author} · {book.chapters.length} 个已识别章节
