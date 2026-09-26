@@ -35,7 +35,11 @@ async function request(path, options = {}) {
     ...options,
   });
   if (!res.ok) {
-    throw new Error(`API ${res.status}: ${path}`);
+    // 状态码挂在 error 上：调用方常常需要区分「404 这东西不存在」与「5xx/断网，
+    // 该让用户重试」。只看 message 字符串去认状态码是脆的（见 fetchStudyContent）。
+    const error = new Error(`API ${res.status}: ${path}`);
+    error.status = res.status;
+    throw error;
   }
   return res.json();
 }
@@ -178,14 +182,23 @@ export const api = {
 
   /**
    * 获取章节学习内容（原文段落 + 备课讲解 + 知识点大纲）。
-   * 章节暂未准备内容时返回 null。
+   *
+   * 返回值有三种含义，**页面必须分得开**：
+   * - 有内容 → 内容对象；
+   * - `null` → 这一章确实没有内容（404：演示数据没覆盖，或章节已不存在）；
+   * - 抛错 → 加载失败（5xx / 断网 / 超时），是**暂时性**的，用户重试有意义。
+   *
+   * 以前这里把两者都吞成 `null`，于是后端抖一下，真实用户会被告知「本章内容尚未准备」，
+   * 而那个占位文案当时还写着「演示数据目前只包含《高等数学》2.1 导数」——一本医学教材
+   * 的用户看到这句会以为自己的书根本没进去，而且页面上没有任何重试入口。
    */
   async fetchStudyContent(bookId, chapterId) {
     if (useBackend()) {
       try {
         return await request(`/api/books/${bookId}/chapters/${chapterId}`);
-      } catch {
-        return null;
+      } catch (error) {
+        if (error.status === 404) return null;
+        throw error;
       }
     }
     await delay(200);

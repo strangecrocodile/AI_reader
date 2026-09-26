@@ -49,6 +49,22 @@ describe('api 后端模式（REST）', () => {
     expect(await api.fetchStudyContent('b1', 'ch9')).toBeNull();
   });
 
+  it('fetchStudyContent 遇到 5xx 时抛错，不伪装成「这一章没有内容」', async () => {
+    // 404 与 5xx 是两件事：前者是「这一章不存在」，后者是「加载失败，重试有意义」。
+    // 混成一种，后端抖一下用户就会被告知自己的书没有内容。
+    configureApiBase('http://backend.test');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
+
+    await expect(api.fetchStudyContent('b1', 'ch1')).rejects.toMatchObject({ status: 500 });
+  });
+
+  it('断网（fetch 直接 reject）同样要抛出去，让页面给出重试', async () => {
+    configureApiBase('http://backend.test');
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+
+    await expect(api.fetchStudyContent('b1', 'ch1')).rejects.toThrow('Failed to fetch');
+  });
+
   it('fetchCapabilities 请求能力接口（.doc 是否可用）', async () => {
     configureApiBase('http://backend.test');
     const fetchMock = vi.fn(async () => ({

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Reader, { PAGE_MODE, SCROLL_MODE } from '../components/Reader.jsx';
 import CoachPanel from '../components/CoachPanel.jsx';
 import SelectionBubble from '../components/SelectionBubble.jsx';
+import StateCard from '../components/StateCard.jsx';
 import { api } from '../services/api.js';
 import { truncate } from '../utils/text.js';
 import { useBooks } from '../state/BookContext.jsx';
@@ -49,6 +50,8 @@ export default function StudyPage() {
 
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [selected, setSelected] = useState(null);
   const [threads, setThreads] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
@@ -81,12 +84,26 @@ export default function StudyPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     setSelected(null);
     setProgress(null);
     setThreads([]);
     setActiveThreadId(null);
     setBubbleOpen(false);
-    api.fetchStudyContent(bookId, chapterId).then((data) => {
+
+    // `fetchStudyContent` 对 404 返回 null（这一章确实没有内容），其余错误往上抛
+    // （加载失败，可重试）。两者在界面上是完全不同的两件事，不能混成一种。
+    (async () => {
+      let data = null;
+      try {
+        data = await api.fetchStudyContent(bookId, chapterId);
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(error);
+          setLoading(false);
+        }
+        return;
+      }
       if (cancelled) return;
       setContent(data);
       setLoading(false);
@@ -98,11 +115,12 @@ export default function StudyPage() {
           if (!cancelled && Array.isArray(list)) setThreads(list);
         })
         .catch(() => {});
-    });
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [bookId, chapterId, report]);
+  }, [bookId, chapterId, report, reloadKey]);
 
   // 锚点定位：设置 focusId，并在短暂高亮后自动清除
   const focusSource = useCallback(
@@ -381,12 +399,29 @@ export default function StudyPage() {
     );
   }
 
+  if (loadError) {
+    return (
+      <section className="page study">
+        <StateCard
+          title="本章内容没能加载出来"
+          description="后端没有响应，或者返回了错误。这多半是暂时的——重试一次通常就好。"
+          hint={`错误信息：${loadError.message || loadError}`}
+          actionLabel="重试"
+          onAction={() => setReloadKey((key) => key + 1)}
+        />
+      </section>
+    );
+  }
+
   if (!content) {
     return (
       <section className="page study placeholder-page">
         <div className="placeholder-card">
           <h2>本章内容尚未准备</h2>
-          <p>演示数据目前只包含「高等数学 · 第二章 · 2.1 导数的概念」。后续章节接入真实 PDF 解析后即可学习。</p>
+          <p>
+            教材里这一章没有被解析出正文段落，或者它已经不在了。
+            回学习计划换一章，或者重新导入一次教材。
+          </p>
           <button className="back-home" onClick={() => navigate('/')}>
             ← 返回学习计划
           </button>
