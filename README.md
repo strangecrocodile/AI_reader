@@ -55,6 +55,11 @@ LLM_MODEL=deepseek-chat
 
 > 不填 `LLM_API_KEY` 时后端使用规则 mock 回退，完整链路照样能演示。
 
+**前端跑在别的域名上时**（不是 `localhost:3000` / `127.0.0.1:5173`），要显式告诉后端放行，
+否则浏览器会拦掉所有请求：在 `backend\.env` 里加一行 `AI_READER_CORS_ORIGINS=https://你的域名`
+（多个用逗号分隔）。后端不会用 `*` 放行任意网站——它没有鉴权，通配等于让用户随手打开的
+任意网页都能读走教材全文、甚至把教材删掉。详见 `docs\后端设计文档.md` 第 4.0 节。
+
 **可选：让扫描件 PDF 也能导入（OCR）。** 不装的话其它格式完全不受影响，只是上传扫描件时
 后端会返回一条带安装指引的提示：
 
@@ -144,11 +149,11 @@ $env:PYTHONPATH = 'src'
 提交改动前，请确保相关套件全部通过。测试均不依赖模型 Key，也不访问外网。
 
 ```powershell
-# 后端：250 项
+# 后端：290 项
 cd backend
 .venv\Scripts\python.exe -m pytest
 
-# 前端：161 项
+# 前端：162 项
 cd frontend
 npm test
 
@@ -156,6 +161,12 @@ npm test
 cd tools\kb-agent
 .venv\Scripts\python.exe -m pytest
 ```
+
+测试全程**不写真实数据目录**：`backend/tests/conftest.py` 给每个用例一份落在
+pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测试前后比对
+`backend/data/sources`、`backend/data/assets`，多出一个文件就失败。写新测试时，
+`create_app(...)` 记得一并传 `settings=isolated_settings(tmp_path)`——只传 `db_path`
+是不够的，原文件与插图的落盘不经过 `db_path`。
 
 ---
 
@@ -272,7 +283,8 @@ cd tools\kb-agent
 所以在后台完成的入库必须自己冒出来，不能等人去刷新整个页面。
 
 **删了的教材能恢复吗？**
-不能。删除会连同章节、原文段落、AI 讲解、学习进度和追问线程一起清掉，界面会先弹一个确认框。
+不能。删除会连同章节、原文段落、AI 讲解、学习进度和追问线程一起清掉，**磁盘上留存的原文件
+与抽出的插图也会一并删掉**，界面会先弹一个确认框。
 **这是唯一会丢弃 OCR 结果的操作**——扫描件删掉就得重新上传、重新识别几十分钟；
 文字版 PDF / Word / 文本重传很快，但进度和追问也不会回来。
 
