@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 const DONE_STATUSES = ['done', 'learned'];
 
 /** 章节目录：点击章节进入对应学习页。 */
-export default function ChapterList({ book, onAdjust }) {
+export default function ChapterList({ book, onAdjust, adjusting = false }) {
   const navigate = useNavigate();
   const goChapter = (chapterId) => navigate(`/study/${book.id}/${chapterId}`);
 
@@ -12,7 +12,10 @@ export default function ChapterList({ book, onAdjust }) {
     <>
       <div className="section-title">
         <h3>学习轨道</h3>
-        <button onClick={onAdjust}>调整计划</button>
+        {/* 重算要真的调模型，可能几秒；禁用 + 换文案，避免连点堆出好几次请求 */}
+        <button onClick={onAdjust} disabled={adjusting}>
+          {adjusting ? '正在重新规划…' : '调整计划'}
+        </button>
       </div>
       {book.chapters.map((chapter) => (
         <button key={chapter.id} className="chapter" onClick={() => goChapter(chapter.id)}>

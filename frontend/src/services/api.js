@@ -107,6 +107,20 @@ export const api = {
   },
 
   /**
+   * 让后端重新生成这本书的学习路径（LLM + 规则回退）。
+   *
+   * 返回值是后端的原始计划结构，**不是**页面用的那份：展示用的 `plan`
+   * （headline / sub / goal / remaining）由 `serializers._plan_to_frontend` 拼出来，
+   * 只有重读教材列表才拿得到。所以调用方约定：先 await 本方法，再 `refreshBooks()`。
+   */
+  async regeneratePlan(bookId) {
+    if (!useBackend()) {
+      throw new Error('演示模式不支持重新规划学习路径，请先连接 FastAPI 后端');
+    }
+    return request(`/api/books/${bookId}/plan`, { method: 'POST' });
+  },
+
+  /**
    * 查询扫描件识别任务的进度。
    *
    * 任务不存在时返回 `null`——那意味着后端重启过（任务状态落在 SQLite 里还在，
