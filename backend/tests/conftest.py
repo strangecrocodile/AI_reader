@@ -8,13 +8,68 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(BACKEND_DIR / "scripts"))
 
+from app.config import Settings  # noqa: E402
 from app.llm.client import MockLLM  # noqa: E402
 from app.main import create_app  # noqa: E402
+
+#: 生产数据目录（跟着 `AI_READER_DATA_DIR` 走）。测试**一个文件都不该往里写**。
+REAL_SOURCES = Path(Settings().sources_dir)
+REAL_ASSETS = Path(Settings().assets_dir)
+REAL_DATA_DIRS = (REAL_SOURCES, REAL_ASSETS)
+
+
+def snapshot_names(directory: Path) -> set:
+    """目录下的文件名集合；目录不存在时为空集。"""
+    return {p.name for p in directory.glob("*")} if directory.is_dir() else set()
+
+
+def isolated_settings(tmp_path: Path) -> Settings:
+    """一份**完全落在 `tmp_path` 里**的配置。
+
+    为什么不能只覆盖 `db_path`：`sources_dir` / `assets_dir` 是从 `data_dir`
+    派生的，而原文件与插图的落盘发生在 `services/ingest` 里、根本不经过
+    `db_path`。于是每个上传教材的测试都会往**真实的** `backend/data/sources`
+    写一份原文件，且没有任何东西回收它——跑几十次测试，磁盘上就多出上千个
+    孤儿文件（实测过一次：库里 3 本书，`data/sources/` 有 1876 个文件）。
+
+    同时把 embedding 配置清空：README 承诺「测试不依赖模型 Key、也不访问外网」，
+    而开发者本机的 `.env` 里可能配了 `EMBEDDING_*`。
+    """
+    settings = Settings(data_dir=tmp_path)
+    settings.embedding_url = ""
+    settings.embedding_api_key = ""
+    return settings
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _real_data_dir_stays_clean():
+    """整场测试前后，真实数据目录必须一个文件都不多。
+
+    这条比逐个测试断言更严：它管的是**所有**测试，包括以后新写的。任何
+    「只传 db_path、忘了 settings」的 `create_app(...)` 都会被它兜住，
+    而不必指望下一个写测试的人记得这条规则。
+    """
+    before = {directory: snapshot_names(directory) for directory in REAL_DATA_DIRS}
+    yield
+    added = {
+        str(directory): sorted(snapshot_names(directory) - before[directory])
+        for directory in REAL_DATA_DIRS
+        if snapshot_names(directory) - before[directory]
+    }
+    assert not added, (
+        f"测试往真实数据目录写了文件：{added}。"
+        "多半是某处 create_app(...) 只传了 db_path 而没传 settings="
+        "isolated_settings(tmp_path)（见本文件的说明）。"
+    )
 
 
 @pytest.fixture
 def app(tmp_path):
-    return create_app(db_path=tmp_path / "test.db", llm=MockLLM())
+    return create_app(
+        settings=isolated_settings(tmp_path),
+        db_path=tmp_path / "test.db",
+        llm=MockLLM(),
+    )
 
 
 @pytest.fixture

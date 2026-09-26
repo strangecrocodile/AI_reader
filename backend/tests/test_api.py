@@ -1043,9 +1043,10 @@ def test_backfill_leaves_normal_books_alone(tmp_path):
 def test_content_warning_is_wired_into_app_startup(tmp_path):
     """回填挂在 `create_app` 上：只写函数不接线，等于没做。"""
     from app.main import create_app
+    from conftest import isolated_settings
 
     path = tmp_path / "wired.db"
-    app = create_app(db_path=path)
+    app = create_app(settings=isolated_settings(tmp_path), db_path=path)
 
     assert app.state.db.get_book("nope") is None  # 空库不报错
     assert Database(path).connect().execute(

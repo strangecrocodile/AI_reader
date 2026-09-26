@@ -460,7 +460,12 @@ def test_update_ocr_task_rejects_unknown_fields(tmp_path):
 
 
 def build_ocr_app(tmp_path, engine, **kwargs):
+    # settings 必须一并隔离（理由见 conftest.isolated_settings）：只覆盖 db_path 时，
+    # 走常规解析路径的上传会把原文件写进真实的 backend/data/sources。
+    from conftest import isolated_settings
+
     return create_app(
+        settings=isolated_settings(tmp_path),
         db_path=tmp_path / "app.db",
         llm=MockLLM(),
         ocr_engine_factory=lambda: engine,

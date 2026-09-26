@@ -1,6 +1,7 @@
 """全局配置：从环境变量读取，支持 .env 文件（见 .env.example）。"""
 import os
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -8,9 +9,15 @@ load_dotenv()
 
 
 class Settings:
-    def __init__(self):
+    def __init__(self, data_dir: Optional[Path] = None):
+        """`data_dir` 是给测试用的注入缝：传了就整棵数据目录（库、原文件、插图）
+        都落在它下面，不传则读环境变量。
+
+        只覆盖 `db_path` 是不够的——`sources_dir` / `assets_dir` 由 `data_dir`
+        派生、且写入发生在入库过程中而不经过 `db_path`（见 tests/conftest.py）。
+        """
         default_dir = Path(__file__).resolve().parent.parent / "data"
-        self.data_dir = Path(os.getenv("AI_READER_DATA_DIR", str(default_dir)))
+        self.data_dir = Path(data_dir or os.getenv("AI_READER_DATA_DIR", str(default_dir)))
         self.db_path = Path(os.getenv("AI_READER_DB", str(self.data_dir / "ai_reader.db")))
         # 上传的原始教材文件：保留原字节流，「下载原文件」与「重新解析」都靠它。
         # 必须是 data_dir 的相对子目录，换部署目录时不用改库里的记录。
