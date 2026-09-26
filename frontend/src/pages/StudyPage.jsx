@@ -438,12 +438,14 @@ export default function StudyPage() {
       <div className="study-layout">
         <Reader
           content={content}
+          bookId={bookId}
           focusId={focusId}
           onSelect={handleSelect}
           onRead={handleRead}
           chapters={chapters}
           currentChapterId={chapterId}
           onSelectChapter={handleSelectChapter}
+          onOpenSource={handleOpenSource}
           viewMode={viewMode}
           onViewModeChange={handleViewModeChange}
         />

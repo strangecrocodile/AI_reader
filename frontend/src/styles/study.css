@@ -930,6 +930,95 @@
   display: none;
 }
 
+/* ---------- 全书搜索 ---------- */
+.book-search {
+  position: relative;
+}
+
+.book-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.book-search-row input {
+  width: clamp(150px, 22vw, 240px);
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  font-size: 13px;
+}
+
+.search-close {
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.book-search-results {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(460px, 82vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: 40;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  padding: 6px;
+}
+
+.search-note {
+  margin: 8px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.search-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 10px;
+  padding: 9px 11px;
+  cursor: pointer;
+}
+
+.search-hit:hover {
+  background: rgba(0, 122, 255, 0.07);
+}
+
+.search-hit-meta {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+/* 跨章命中要一眼看得出，点下去会换章，不是在本章里滚动 */
+.search-hit.cross .search-hit-meta {
+  color: #9a5a00;
+}
+
+.search-hit-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 1180px) {
   .study {

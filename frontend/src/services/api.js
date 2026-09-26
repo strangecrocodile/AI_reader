@@ -219,6 +219,22 @@ export const api = {
     return content ? structuredClone(content) : null;
   },
 
+  /**
+   * 在整本教材里搜索，返回带锚点与章节的命中，用于「跳过去并高亮」。
+   *
+   * 空查询返回空列表（后端也是这个约定）：用户清空输入框不该看到报错。
+   */
+  async searchBook(bookId, query, limit = 20) {
+    const text = String(query || '').trim();
+    if (!text) return { query: '', total: 0, hits: [] };
+    if (useBackend()) {
+      const params = new URLSearchParams({ q: text, limit: String(limit) });
+      return request(`/api/books/${bookId}/search?${params}`);
+    }
+    await delay(120);
+    return searchDemoContent(bookId, text, limit);
+  },
+
   /** 获取知识点卡片与关系图谱数据。 */
   async fetchKnowledge(bookId) {
     if (useBackend()) {
@@ -457,6 +473,59 @@ function readAllProgress() {
   } catch {
     return {};
   }
+}
+
+/**
+ * 演示模式下的整本搜索：直接在前端内置的演示数据里扫一遍。
+ *
+ * 演示数据只有一章有正文，所以命中很少——但形状与后端完全一致，界面只有一套逻辑。
+ * 演示模式什么都不返回的话，搜索结果永远为空，看起来像功能坏了。
+ */
+function searchDemoContent(bookId, query, limit) {
+  const book = books.find((item) => item.id === bookId);
+  const contents = studyContents[bookId] || {};
+  const hits = [];
+  const needle = query.toLowerCase();
+
+  for (const chapter of book?.chapters ?? []) {
+    const content = contents[chapter.id];
+    for (const para of content?.paragraphs ?? []) {
+      const anchorId = firstAnchorOf(para);
+      // 没有锚点的段落定位不了——点进去也不会高亮，不如不给这条
+      if (!anchorId) continue;
+      const text = segmentsToText(para);
+      if (!text || !text.toLowerCase().includes(needle)) continue;
+      hits.push({
+        anchorId,
+        chapterId: chapter.id,
+        chapterTitle: chapter.title,
+        page: content.page ?? 1,
+        text,
+        kind: para.type ?? 'p',
+        score: 0,
+      });
+      if (hits.length >= limit) return { query, total: hits.length, hits };
+    }
+  }
+  return { query, total: hits.length, hits };
+}
+
+/** 把一个段落块拼成纯文本（演示数据里正文是片段数组）。 */
+function segmentsToText(para) {
+  if (para.type && para.type !== 'p') return para.caption || '';
+  return (para.segs ?? [])
+    .map((seg) => {
+      if (typeof seg.v === 'string' && seg.v) return seg.v;
+      if (Array.isArray(seg.segs)) return seg.segs.map((inner) => inner.v ?? '').join('');
+      return '';
+    })
+    .join('');
+}
+
+/** 段落里第一个带锚点的片段 id（后端把锚点放在最外层片段上）。 */
+function firstAnchorOf(para) {
+  const seg = (para.segs ?? []).find((item) => item.t === 'src');
+  return seg?.id ?? '';
 }
 
 function readProgress(bookId) {

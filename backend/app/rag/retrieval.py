@@ -232,3 +232,21 @@ class RetrievalService:
         )
         scope = "chapter" if all(hit["chapter_id"] == chapter_id for hit in hits) else "book"
         return {"scope": scope, "hits": hits}
+
+    def search_whole_book(
+        self,
+        book_id: str,
+        query: str,
+        k: int = 20,
+        use_vector: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """整本教材检索，**不做本章加权**。
+
+        与 `search_book` 的差别就在这一点：那个是给问答用的，要「本章命中优先」；
+        而用户在搜索框里找东西时，结果不该因为他此刻停在哪一章而变化——
+        同一句话在第一章搜和在最后一章搜，必须给出同一张结果列表。
+        """
+        index, owner = self._book_index(book_id)
+        if not owner:
+            return []
+        return self._rank(book_id, index, owner, query, k, set(owner), use_vector)

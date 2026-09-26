@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ChapterNav from './ChapterNav.jsx';
+import ChapterSearch from './ChapterSearch.jsx';
 import SegmentText from './SegmentText.jsx';
 import {
   PAGE_HEIGHT,
@@ -34,12 +35,14 @@ const EMPTY_ITEMS = [];
  */
 export default function Reader({
   content,
+  bookId,
   focusId,
   onSelect,
   onRead,
   chapters = [],
   currentChapterId,
   onSelectChapter,
+  onOpenSource,
   viewMode = SCROLL_MODE,
   onViewModeChange,
 }) {
@@ -186,6 +189,13 @@ export default function Reader({
           ← 返回学习计划
         </button>
         <div className="reader-tools">
+          {/* 用路由里的 bookId，而不是 content.bookId：演示数据里没有这个字段，
+              拿它去搜会变成「搜 undefined」 */}
+          <ChapterSearch
+            bookId={bookId}
+            currentChapterId={currentChapterId}
+            onOpenSource={onOpenSource}
+          />
           <ChapterNav
             chapters={chapters}
             currentId={currentChapterId}

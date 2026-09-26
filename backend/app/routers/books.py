@@ -28,6 +28,8 @@ from ..services.ingest import (
 from ..services.knowledge import get_knowledge
 from ..services.ocr import OcrUnavailable
 from ..services.progress import record_event
+from ..services.search import DEFAULT_LIMIT as DEFAULT_SEARCH_LIMIT
+from ..services.search import search_full_text
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +236,23 @@ def get_book_knowledge(book_id: str, request: Request):
     if not book:
         raise HTTPException(status_code=404, detail="教材不存在")
     return get_knowledge(db, llm, book)
+
+
+@router.get("/api/books/{book_id}/search")
+def search_in_book(
+    book_id: str,
+    request: Request,
+    q: str = "",
+    limit: int = DEFAULT_SEARCH_LIMIT,
+):
+    """在整本教材里检索（不做本章加权），返回带锚点与章节的命中列表。
+
+    `q` 为空时返回空列表而不是报错——用户刚清空输入框而已。
+    """
+    db, _, retrieval, _ = _state(request)
+    if not db.get_book(book_id):
+        raise HTTPException(status_code=404, detail="教材不存在")
+    return search_full_text(db, retrieval, book_id, q, limit)
 
 
 @router.post("/api/books/{book_id}/chapters/{chapter_id}/progress")
