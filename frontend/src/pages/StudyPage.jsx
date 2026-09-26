@@ -146,6 +146,8 @@ export default function StudyPage() {
       truncated: truncate(text),
       anchorId: meta.anchorId ?? '',
       rect: meta.rect ?? null,
+      // Range 留着，好让划词气泡在滚动后重新量一次位置（视口坐标会作废）
+      range: meta.range ?? null,
     });
     // 选中新原文时收起浮层：下一次提问会为新选区另开一条线程
     setBubbleOpen(false);

@@ -326,9 +326,9 @@ function sameLayout(prev, next) {
   );
 }
 
-/** 选区信息：所在原文锚点 + 视口位置（划词气泡据此贴到选区旁边）。 */
+/** 选区信息：所在原文锚点 + 视口位置（划词气泡据此贴到选区旁边）+ 选区本身。 */
 function selectionMeta(selection) {
-  if (!selection || selection.rangeCount === 0) return { anchorId: '', rect: null };
+  if (!selection || selection.rangeCount === 0) return { anchorId: '', rect: null, range: null };
   const range = selection.getRangeAt(0);
   const node = selection.anchorNode;
   const element = node?.nodeType === 1 ? node : node?.parentElement;
@@ -339,5 +339,8 @@ function selectionMeta(selection) {
     rect: box
       ? { top: box.top, left: box.left, bottom: box.bottom, width: box.width }
       : null,
+    // 把 Range 一起交出去：视口坐标在滚动后就作废了，而 Range 还指向同一段原文，
+    // 随时可以重新量一次（见 SelectionBubble 的 useLiveAnchor）。
+    range,
   };
 }
