@@ -5,16 +5,28 @@ from .db import Database
 from .parsing.base import CHAPTER_TITLE_RE, STYLE_TOKENS
 from .services import lesson, plan as plan_service
 
+#: 封面「规格行」用的格式名。封面是纯展示，但**不能展示假信息**：这里以前对所有
+#: 教材硬编码「注：演示数据」与一行微积分公式，用户上传一本法学期刊，书架首屏也会
+#: 告诉他这是演示数据、还配着导数公式。现在四个槽位全部由这本书自己派生。
+_COVER_FORMAT_LABELS = {
+    "pdf": "PDF",
+    "docx": "WORD",
+    "doc": "WORD",
+    "text": "文本",
+}
+
 
 def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
     chapters = db.chapters_of(book["id"])
     progress_by_chapter = db.progress_of_book(book["id"])
     plan = plan_service.get_plan(db, llm, book, chapters)
     pct = round(book.get("progress_pct", 0) or 0)
+    author = book.get("author", "") or "来源：用户导入"
+    source_format = (book.get("source_format") or "").strip().lower()
     return {
         "id": book["id"],
         "title": book["title"],
-        "author": book.get("author", "") or "来源：用户导入",
+        "author": author,
         "edition": "",
         "note": book.get("note", ""),
         # 解析受限提示（跳过了表格/文本框/图片、正文过少等）。前端据此提醒用户
@@ -26,11 +38,13 @@ def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
         "sourceFormat": book.get("source_format", "") or "",
         "progressText": f"{pct}% 已完成",
         "tag": book["title"][:8],
+        # 封面：书名用真书名，规格行用来源格式与已识别章节数，页脚用作者/来源。
+        # 每一句都对得上这本书（见 _COVER_FORMAT_LABELS 的说明）。
         "cover": {
             "series": "AI LECTURER · IMPORTED TEXTBOOK",
-            "lines": [book["title"], "注：演示数据"],
-            "formula": ["f′(x₀) = lim Δx→0 …", "∫ f(x) dx"],
-            "footer": f"第 {len(chapters)} 章已识别",
+            "lines": [book["title"]],
+            "formula": [_COVER_FORMAT_LABELS.get(source_format, "教材"), f"{len(chapters)} 章"],
+            "footer": author,
         },
         "plan": _plan_to_frontend(plan),
         "chapters": [

@@ -10,11 +10,12 @@ function book(extra = {}) {
     title: '神经网络与深度学习',
     edition: '',
     progressText: '32% 已完成',
+    // 与后端 serializers.book_meta 的封面对齐：四个槽位都由教材自己派生
     cover: {
       series: 'AI LECTURER · IMPORTED TEXTBOOK',
-      lines: ['神经网络与深度学习', '注：演示数据'],
-      formula: ['f′(x₀) = lim Δx→0 …', '∫ f(x) dx'],
-      footer: '第 4 章已识别',
+      lines: ['神经网络与深度学习'],
+      formula: ['PDF', '4 章'],
+      footer: '来源：用户导入',
     },
     ...extra,
   };
