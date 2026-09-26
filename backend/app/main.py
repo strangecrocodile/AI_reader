@@ -19,6 +19,7 @@ from .db import Database
 from .llm.client import CloudLLM, MockLLM
 from .rag.retrieval import RetrievalService
 from .routers import books, ocr
+from .services.demo import seed_demo_if_empty
 from .services.ingest import backfill_content_warnings
 from .services.ocr import OcrTaskService
 
@@ -56,6 +57,10 @@ def create_app(
     # 同理对 OCR 任务对一次账：跑 OCR 的线程随进程一起没了，但任务行还写着
     # running。不处理的话前端会一直转圈，比报错更糟。
     db.fail_stale_ocr_tasks(INTERRUPTED_OCR_MESSAGE)
+    # 空库时造一本示例教材：README 承诺「不配 Key 也能跑通完整演示」，但 data/ 不进 Git，
+    # 新克隆的仓库里一本书都没有，第一步就卡在「还没有教材」。内部已收口所有异常。
+    if settings.auto_demo:
+        seed_demo_if_empty(db, settings)
     llm = llm or _build_llm(settings)
     retrieval = RetrievalService(db, settings)
 

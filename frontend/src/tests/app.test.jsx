@@ -694,7 +694,9 @@ describe('空态与异常兜底', () => {
     renderApp(['/']);
 
     expect(await screen.findByText('还没有教材')).toBeInTheDocument();
-    expect(screen.getByText(/make_demo_pdf\.py/)).toBeInTheDocument();
+    // 引导必须落在页面内（上传），不能把用户推去命令行
+    expect(screen.queryByText(/make_demo_pdf\.py/)).toBeNull();
+    expect(screen.getByText(/会自动放一本示例教材/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '上传教材' }));
     expect(screen.getByText('更换教材')).toBeInTheDocument();

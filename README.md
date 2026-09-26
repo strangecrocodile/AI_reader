@@ -39,7 +39,10 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-生成一本**团队原创**的示例教材。`backend/data/` 不纳入 Git，**首次必须执行这一步**（之后也可在页面上传自己的 PDF）：
+**示例教材不用手动生成。** `backend/data/` 不纳入 Git，但后端在**书架为空时会自动导入
+一本团队原创的示例教材**（见 `backend/app/services/demo.py`），所以起好服务就能直接学。
+不想要它、或者需要一本真正空的书架时，在 `backend\.env` 里设 `AI_READER_AUTO_DEMO=off`。
+想单独导出这份 PDF 文件本身（例如放进演示材料）：
 
 ```powershell
 .venv\Scripts\python.exe scripts\make_demo_pdf.py
@@ -224,7 +227,10 @@ pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测�
 后端没起来或地址不对。按「日常调试启动 · 终端 1」启动后端，确认 http://localhost:8000/api/health 能打开，并检查 `frontend\.env` 的 `VITE_API_BASE_URL`。页面上的「重试」可直接重连，无需刷新。
 
 **还没导入教材时打开首页看到什么？**
-会看到「还没有教材」的引导：点「上传教材」即可；也可以先在 `backend` 目录执行 `scripts\make_demo_pdf.py` 生成团队原创的示例教材再刷新。知识地图页同样会给引导，不会一直空白或转圈。
+正常情况下**看不到这个状态**：后端在书架为空时会自动导入一本示例教材，起好服务就有书可学。
+如果确实看到了「还没有教材」，说明示例教材没导入成功（或已被删掉），页面会直接给上传入口，
+点「上传教材」即可。排查导入失败看后端日志里的「自动导入示例教材失败」。知识地图页同样会给引导，
+不会一直空白或转圈。
 
 **讲解和回答偏模板化？**
 `backend\.env` 没配 `LLM_API_KEY`，后端在用规则回退。填入 DeepSeek Key 后重启后端即切换为真实推理（`/api/health` 的 `llm` 会变成 `cloud`）。
@@ -262,7 +268,8 @@ pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测�
 后端换端口启动（如 `--port 8001`），并把 `frontend\.env` 的 `VITE_API_BASE_URL` 同步改成对应地址；前端端口可在 `frontend/vite.config.mjs` 调整。
 
 **知识地图为空或提示不可用？**
-知识地图由章节原文抽取出的知识点聚合而来，需要先有一次教材成功入库。确认已执行 `scripts\make_demo_pdf.py`，或先在主页上传一本教材。
+知识地图由章节原文抽取出的知识点聚合而来，需要先有一次教材成功入库。空书架时后端会
+自动导入示例教材，所以正常情况不会遇到；若确实为空，先在主页上传一本教材即可。
 
 **上传 `.doc` 报错说没装 LibreOffice？**
 `.doc` 是旧版二进制 Word 格式，`python-docx` 读不了，需要本机装有 **LibreOffice**
@@ -321,7 +328,8 @@ pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测�
 ## 七、版权与合规
 
 - 演示材料由脚本生成、内容为**团队原创**，可安全用于公开演示：
-  `backend/data/demo_textbook.pdf`（来自 `backend/scripts/make_demo_pdf.py`）、
+  `backend/data/demo_textbook.pdf`（来自 `backend/scripts/make_demo_pdf.py`，
+  同一份内容也会在空书架启动时由 `backend/app/services/demo.py` 自动导入）、
   `tools/kb-agent/data/source/sample_book.docx`（来自 `tools/kb-agent/scripts/make_sample_book.py`）。
 - 接入真实教材时，须使用具有合法使用权的 PDF / Word 文档。
 - 使用的开源组件与许可证清单见 `docs/后端设计文档.md` 第 2、7 节（FastAPI、Uvicorn、PyMuPDF、pydantic、httpx、python-dotenv、pytest 等）。

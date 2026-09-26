@@ -39,7 +39,10 @@ export default function HomePage() {
         <StateCard
           title="还没有教材"
           description="上传一份 PDF / Word(.docx) / 纯文本(.txt/.md) 教材即可开始学习。"
-          hint="没有现成教材？在 backend 目录执行 scripts/make_demo_pdf.py 可生成一份团队原创的示例教材。"
+          // 后端在空库时本应自动导入一本示例教材（见 backend/app/services/demo.py）。
+          // 走到这里说明它没导成（或已被删掉），所以给的是**页面内**的下一步，
+          // 而不是「去 backend 目录跑某个脚本」——那不是一个网页产品该有的引导。
+          hint="后端在书架为空时会自动放一本示例教材；这里没有，说明它没导入成功或被删掉了。直接上传你自己的教材同样可以开始。"
           actionLabel="上传教材"
           onAction={() => setModalOpen(true)}
         />

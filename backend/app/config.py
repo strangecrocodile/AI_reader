@@ -51,6 +51,13 @@ class Settings:
         #: ONNX 默认会用满所有核心；在 Web 服务里是坏邻居，这里显式收敛
         self.ocr_threads = int(os.getenv("AI_READER_OCR_THREADS", "4"))
         self.ocr_max_bytes = int(os.getenv("AI_READER_OCR_MAX_MB", "200")) * 1024 * 1024
+        # 空库时自动导入一本团队原创的示例教材（见 services/demo.py）。
+        # 关掉它的唯一理由是「我要一个真正空的书架」，例如跑测试或部署到已有数据的库。
+        self.auto_demo = os.getenv("AI_READER_AUTO_DEMO", "on").strip().lower() not in (
+            "0",
+            "off",
+            "false",
+        )
         # 允许的前端来源（逗号分隔）。留空则用 DEFAULT_CORS_ORIGINS，见其说明。
         configured_origins = [
             origin.strip()

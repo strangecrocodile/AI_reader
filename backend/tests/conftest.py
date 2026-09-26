@@ -34,10 +34,14 @@ def isolated_settings(tmp_path: Path) -> Settings:
 
     同时把 embedding 配置清空：README 承诺「测试不依赖模型 Key、也不访问外网」，
     而开发者本机的 `.env` 里可能配了 `EMBEDDING_*`。
+
+    也把 `auto_demo` 关掉：否则每个用例一建 app 就凭空多出一本示例教材，
+    「空书架」这类前提全都不成立。示例教材本身由 test_demo_seed.py 专门测。
     """
     settings = Settings(data_dir=tmp_path)
     settings.embedding_url = ""
     settings.embedding_api_key = ""
+    settings.auto_demo = False
     return settings
 
 
@@ -81,11 +85,9 @@ def client(app):
 
 @pytest.fixture(scope="session")
 def demo_pdf_bytes(tmp_path_factory):
-    import make_demo_pdf
+    from app.services.demo import build_demo_pdf_bytes
 
-    out = tmp_path_factory.mktemp("pdf") / "demo.pdf"
-    make_demo_pdf.build_demo_pdf(out)
-    return out.read_bytes()
+    return build_demo_pdf_bytes()
 
 
 @pytest.fixture(scope="session")
