@@ -7,6 +7,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+#: 默认允许的前端来源。**刻意不用 `*`**：后端没有任何鉴权，而 `*` 意味着用户
+#: 浏览的任意网页都能在后台读走整本教材原文（`GET /api/books/{id}/chapters/{cid}`），
+#: 或直接 `DELETE /api/books/{id}` 把教材删掉——id 从 `GET /api/books` 就能拿到。
+#: 这里放的是本机开发默认端口（前端 vite.config.mjs 用 3000），部署时用
+#: `AI_READER_CORS_ORIGINS` 显式列出真实来源。
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
+
 
 class Settings:
     def __init__(self, data_dir: Optional[Path] = None):
@@ -39,6 +51,13 @@ class Settings:
         #: ONNX 默认会用满所有核心；在 Web 服务里是坏邻居，这里显式收敛
         self.ocr_threads = int(os.getenv("AI_READER_OCR_THREADS", "4"))
         self.ocr_max_bytes = int(os.getenv("AI_READER_OCR_MAX_MB", "200")) * 1024 * 1024
+        # 允许的前端来源（逗号分隔）。留空则用 DEFAULT_CORS_ORIGINS，见其说明。
+        configured_origins = [
+            origin.strip()
+            for origin in os.getenv("AI_READER_CORS_ORIGINS", "").split(",")
+            if origin.strip()
+        ]
+        self.cors_origins = configured_origins or list(DEFAULT_CORS_ORIGINS)
 
     @property
     def llm_configured(self) -> bool:

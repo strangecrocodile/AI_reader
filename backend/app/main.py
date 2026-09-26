@@ -60,9 +60,13 @@ def create_app(
     retrieval = RetrievalService(db, settings)
 
     app = FastAPI(title="AI讲师 · 教材驱动学习系统", version=__version__)
+    # 来源显式列出，**不用 `*`**：这个后端没有任何鉴权，而 CORS 通配等于让用户
+    # 浏览的任意网页都能读走教材全文、或调 DELETE 把教材删掉（见
+    # `config.DEFAULT_CORS_ORIGINS`）。注意这只挡住「浏览器里的其它网站」这一条
+    # 路径——它不是鉴权，真正需要暴露到公网时应另外加访问控制。
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
