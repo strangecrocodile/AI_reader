@@ -55,3 +55,30 @@ describe('BookCard 下载原文件', () => {
     expect(screen.queryByRole('link', { name: /下载原文件/ })).toBeNull();
   });
 });
+
+describe('BookCard 导出 Markdown', () => {
+  it('连上后端时给出导出链接，指向库里的渲染接口', () => {
+    configureApiBase('http://localhost:8000');
+    render(<BookCard book={book({ hasSource: true })} onSwap={() => {}} />);
+
+    const link = screen.getByRole('link', { name: /导出 Markdown/ });
+    expect(link).toHaveAttribute('href', 'http://localhost:8000/api/books/bk1/markdown');
+    expect(link).toHaveAttribute('download');
+  });
+
+  it('没有留存原文件的老教材照样能导出——导出是现渲染的，不依赖原文件', () => {
+    configureApiBase('http://localhost:8000');
+    render(<BookCard book={book({ hasSource: false })} onSwap={() => {}} />);
+
+    // 下载原文件没有，导出 Markdown 有：这正是老教材唯一能拿到全文的途径
+    expect(screen.queryByRole('link', { name: /下载原文件/ })).toBeNull();
+    expect(screen.getByRole('link', { name: /导出 Markdown/ })).toBeInTheDocument();
+  });
+
+  it('演示模式没有后端可导出，不给坏链接', () => {
+    configureApiBase('');
+    render(<BookCard book={book({ hasSource: true })} onSwap={() => {}} />);
+
+    expect(screen.queryByRole('link', { name: /导出 Markdown/ })).toBeNull();
+  });
+});

@@ -178,7 +178,7 @@ pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测�
 | 换端口启动后端 | `.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8001` |
 | 重新生成示例教材（PDF） | `.venv\Scripts\python.exe scripts\make_demo_pdf.py` |
 | 安装扫描件 OCR 依赖（可选） | `.venv\Scripts\python.exe -m pip install -r requirements-ocr.txt` |
-| 导出教材 Markdown | `curl http://localhost:8000/api/books/<id>/markdown -o book.md` |
+| 导出教材 Markdown | 主页教材卡片上的「导出 Markdown」按钮；或 `curl http://localhost:8000/api/books/<id>/markdown -o book.md` |
 | 删除教材（不可恢复） | `curl -X DELETE http://localhost:8000/api/books/<id>` |
 | 跑后端测试 | `.venv\Scripts\python.exe -m pytest` |
 | 启动前端开发服务器 | `npm run dev` |

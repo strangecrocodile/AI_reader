@@ -166,6 +166,19 @@ export const api = {
     return `${apiBase}/api/books/${book.id}/source`;
   },
 
+  /**
+   * 教材 Markdown 导出的地址；演示模式下没有后端可导出。
+   *
+   * 与「下载原文件」不是一回事：导出是**从库里现渲染**的（`backend/app/services/export.py`），
+   * 每个段落带 `<!-- page: N -->`，所以只要这本书在库里就有——不需要留存过原文件。
+   * 老教材（该功能上线前导入、没有原文件）也照样能导出。
+   */
+  markdownUrl(book) {
+    if (!book?.id) return '';
+    if (!useBackend()) return ''; // 演示模式的数据是前端内置的，没有可导出的库
+    return `${apiBase}/api/books/${book.id}/markdown`;
+  },
+
   /** 获取单本教材；不存在返回 null。 */
   async fetchBook(bookId) {
     if (useBackend()) {
