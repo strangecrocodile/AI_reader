@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import QuizPanel from './QuizPanel.jsx';
 import SegmentText from './SegmentText.jsx';
 
 /**
@@ -13,6 +14,7 @@ export default function CoachPanel({
   selected,
   progress,
   notes = [],
+  quiz,
   onAsk,
   onComplete,
   onSelectThread,
@@ -21,6 +23,7 @@ export default function CoachPanel({
   onCreateNote,
   onUpdateNote,
   onDeleteNote,
+  onAnswerQuiz,
   clearSelected,
   onFocusSource,
 }) {
@@ -80,6 +83,7 @@ export default function CoachPanel({
           </div>
         )}
         <ThreadList threads={threads} activeId={thread?.id} onSelect={onSelectThread} onDelete={onDeleteThread} />
+        <QuizPanel quiz={quiz} onAnswer={onAnswerQuiz} />
         <NotesList
           notes={notes}
           onFocus={onFocusSource}

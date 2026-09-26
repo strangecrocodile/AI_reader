@@ -8,11 +8,20 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from ..models import AskRequest, EventRequest, NoteRequest, NoteUpdateRequest, ProgressRequest, ThreadRequest
+from ..models import (
+    AskRequest,
+    EventRequest,
+    NoteRequest,
+    NoteUpdateRequest,
+    ProgressRequest,
+    QuizAnswerRequest,
+    ThreadRequest,
+)
 from ..parsing.pdf import probe_pdf
 from ..serializers import book_meta, chapter_content
 from ..services import legacy_doc
 from ..services import notes as notes_service
+from ..services import quiz as quiz_service
 from ..services import threads as thread_service
 from ..services.ask import answer_question, stream_answer
 from ..services.export import export_book_markdown
@@ -410,6 +419,41 @@ def regenerate_plan(book_id: str, request: Request):
     from ..services.plan import get_plan
 
     return get_plan(db, llm, book, db.chapters_of(book_id), force=True)
+
+
+# ---------- 自测 ----------
+
+
+@router.get("/api/books/{book_id}/chapters/{chapter_id}/quiz")
+def get_chapter_quiz(book_id: str, chapter_id: str, request: Request):
+    """本章自测题（**不含答案**）。材料不足时 `total` 为 0，不是错误。"""
+    db, llm, _, _ = _state(request)
+    book = db.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="教材不存在")
+    chapter = db.get_chapter(book_id, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return quiz_service.get_quiz(db, llm, book, chapter)
+
+
+@router.post("/api/books/{book_id}/chapters/{chapter_id}/quiz/answer")
+def answer_chapter_quiz(book_id: str, chapter_id: str, payload: QuizAnswerRequest, request: Request):
+    """判卷并落一条 `quiz` 学习事件，返回对错、正确答案与重算后的掌握度。
+
+    判卷放在后端：前端拿不到答案，掌握度里那 25% 的正确率就不是「前端自己说对了」。
+    """
+    db, llm, _, _ = _state(request)
+    book = db.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="教材不存在")
+    chapter = db.get_chapter(book_id, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    result = quiz_service.grade(db, llm, book, chapter, payload.questionId, payload.choice)
+    if result is None:
+        raise HTTPException(status_code=404, detail="这道题不存在（题面可能已经更新）")
+    return result
 
 
 # ---------- 笔记 ----------

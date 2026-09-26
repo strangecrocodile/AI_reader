@@ -930,6 +930,93 @@
   display: none;
 }
 
+/* ---------- 自测 ---------- */
+.quiz-panel {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.quiz-note {
+  margin: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.quiz-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.quiz-item {
+  padding: 8px 6px;
+}
+
+.quiz-prompt {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.quiz-options {
+  display: grid;
+  gap: 6px;
+}
+
+.quiz-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  padding: 7px 11px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.quiz-option b {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.quiz-option:hover:not(:disabled) {
+  border-color: rgba(0, 122, 255, 0.4);
+}
+
+.quiz-option:disabled {
+  cursor: default;
+}
+
+/* 判过卷之后才上色：没判之前不该有任何暗示 */
+.quiz-option.correct {
+  border-color: rgba(47, 209, 124, 0.55);
+  background: rgba(47, 209, 124, 0.1);
+}
+
+.quiz-option.wrong {
+  border-color: rgba(255, 59, 48, 0.5);
+  background: rgba(255, 59, 48, 0.08);
+}
+
+.quiz-verdict {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.quiz-verdict.ok {
+  color: #1c7c46;
+}
+
+.quiz-verdict.no {
+  color: #b3261e;
+}
+
 /* ---------- 笔记 ---------- */
 /* 段首的笔记记号。绝对定位到左侧留白里，不占正文行内空间——否则每段有笔记的
    文字都会被迫右移一点，读起来是断的。 */

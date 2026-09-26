@@ -422,6 +422,36 @@ export const api = {
     deleteLocalThread(threadId);
   },
 
+  // ---------- 自测 ----------
+
+  /**
+   * 本章自测题（**不含答案**）。材料不足时 `total` 为 0，不是错误。
+   *
+   * 答案只在后端：前端拿不到，判卷走 `answerQuiz`，所以掌握度里那 25% 的
+   * 自测正确率不是「前端自己说对了」。
+   */
+  async fetchQuiz(bookId, chapterId) {
+    if (useBackend()) {
+      return request(`/api/books/${bookId}/chapters/${chapterId}/quiz`);
+    }
+    await delay(120);
+    return demoQuizFor(bookId, chapterId);
+  },
+
+  /** 提交一道题的作答，返回对错、正确答案与重算后的掌握度。 */
+  async answerQuiz(bookId, chapterId, questionId, choice) {
+    if (useBackend()) {
+      const res = await fetch(`${apiBase}/api/books/${bookId}/chapters/${chapterId}/quiz/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionId, choice }),
+      });
+      if (!res.ok) throw new Error(await failureDetail(res, `提交作答失败（${res.status}）`));
+      return res.json();
+    }
+    return answerDemoQuiz(bookId, chapterId, questionId, choice);
+  },
+
   // ---------- 笔记 ----------
 
   /**
@@ -573,13 +603,57 @@ function searchDemoContent(bookId, query, limit) {
 /** 把一个段落块拼成纯文本（演示数据里正文是片段数组）。 */
 function segmentsToText(para) {
   if (para.type && para.type !== 'p') return para.caption || '';
-  return (para.segs ?? [])
+  return segsToPlain(para.segs);
+}
+
+/** 片段数组 → 纯文本。锚点片段的子片段也要摊平（正文在子片段里）。 */
+function segsToPlain(segs) {
+  return (segs ?? [])
     .map((seg) => {
       if (typeof seg.v === 'string' && seg.v) return seg.v;
-      if (Array.isArray(seg.segs)) return seg.segs.map((inner) => inner.v ?? '').join('');
+      if (Array.isArray(seg.segs)) return segsToPlain(seg.segs);
       return '';
     })
     .join('');
+}
+
+/**
+ * 演示模式的自测题：直接取演示数据里写好的那一份（见 data/books.js 的 `quiz`）。
+ *
+ * 不在这里「就地抽概念出题」：演示数据里没有概念抽取那一步，硬凑出来的题目会
+ * 和正文对不上。形状与后端 `/quiz` 完全一致，界面只有一套逻辑。
+ *
+ * 演示模式的答案存在前端（`answerIndex`），这不是问题：演示模式没有服务端，
+ * 也就没有需要保护的掌握度；接上后端后答案只在后端。
+ */
+function demoQuizQuestions(bookId, chapterId) {
+  return studyContents[bookId]?.[chapterId]?.quiz?.questions ?? [];
+}
+
+function demoQuizFor(bookId, chapterId) {
+  const questions = demoQuizQuestions(bookId, chapterId);
+  return {
+    chapterId,
+    total: questions.length,
+    model: studyContents[bookId]?.[chapterId]?.quiz?.model ?? 'demo',
+    // 答案不下发，与后端同一个形状
+    questions: questions.map(({ answerIndex, ...rest }) => rest),
+  };
+}
+
+async function answerDemoQuiz(bookId, chapterId, questionId, choice) {
+  const question = demoQuizQuestions(bookId, chapterId).find((item) => item.id === questionId);
+  if (!question) throw new Error('这道题不存在');
+  const correct = Number(choice) === question.answerIndex;
+  // 走同一个学习事件入口，掌握度那 25% 才会真的动起来
+  const progress = await api.recordLearningEvent({ bookId, chapterId, kind: 'quiz', correct });
+  return {
+    correct,
+    answerIndex: question.answerIndex,
+    answer: question.options[question.answerIndex],
+    anchorId: '',
+    progress,
+  };
 }
 
 /** 段落里第一个带锚点的片段 id（后端把锚点放在最外层片段上）。 */

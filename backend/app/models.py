@@ -41,6 +41,13 @@ class NoteUpdateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
 
 
+class QuizAnswerRequest(BaseModel):
+    """提交一道自测题的作答。答案在后端，前端只报「选了第几项」。"""
+
+    questionId: str = Field(min_length=1, max_length=120)
+    choice: int = Field(ge=0, le=20)
+
+
 class ProgressRequest(BaseModel):
     status: str = Field(pattern="^(learning|learned)$")
     mastery: float = Field(ge=0, le=100)

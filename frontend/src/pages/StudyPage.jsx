@@ -55,6 +55,7 @@ export default function StudyPage() {
   const [selected, setSelected] = useState(null);
   const [threads, setThreads] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [quiz, setQuiz] = useState(null);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [bubbleOpen, setBubbleOpen] = useState(false);
   const [bubbleRect, setBubbleRect] = useState(null);
@@ -90,6 +91,7 @@ export default function StudyPage() {
     setProgress(null);
     setThreads([]);
     setNotes([]);
+    setQuiz(null);
     setActiveThreadId(null);
     setBubbleOpen(false);
 
@@ -121,6 +123,13 @@ export default function StudyPage() {
         .fetchNotes(bookId, chapterId)
         .then((list) => {
           if (!cancelled && Array.isArray(list)) setNotes(list);
+        })
+        .catch(() => {});
+      api
+        .fetchQuiz(bookId, chapterId)
+        .then((data) => {
+          // 出不了题不是错误（材料不足时 total 为 0），面板会如实说明
+          if (!cancelled && data) setQuiz(data);
         })
         .catch(() => {});
     })();
@@ -440,6 +449,26 @@ export default function StudyPage() {
     [notes],
   );
 
+  // ---------- 自测 ----------
+
+  /**
+   * 提交一道自测题。后端判卷并回传重算后的掌握度，面板直接更新——
+   * 这就是「自测正确率」那 25% 从「未计入」变成真实分数的路径。
+   */
+  const handleAnswerQuiz = useCallback(
+    async (questionId, choice) => {
+      try {
+        const result = await api.answerQuiz(bookId, chapterId, questionId, choice);
+        if (result?.progress) setProgress(result.progress);
+        return result;
+      } catch (error) {
+        toast(error.message || '提交作答失败，请稍后重试');
+        return null;
+      }
+    },
+    [bookId, chapterId, toast],
+  );
+
   /** 切换到另一章（顶部章节导航）。跨章定位原文走 handleOpenSource。 */
   const handleSelectChapter = useCallback(
     (id) => {
@@ -523,6 +552,7 @@ export default function StudyPage() {
           selected={selected}
           progress={progress}
           notes={notes}
+          quiz={quiz}
           onAsk={handleAsk}
           onComplete={handleComplete}
           onSelectThread={handleSelectThread}
@@ -531,6 +561,7 @@ export default function StudyPage() {
           onCreateNote={handleCreateNote}
           onUpdateNote={handleUpdateNote}
           onDeleteNote={handleDeleteNote}
+          onAnswerQuiz={handleAnswerQuiz}
           clearSelected={clearSelected}
           onFocusSource={focusSource}
         />

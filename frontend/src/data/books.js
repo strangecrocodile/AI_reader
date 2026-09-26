@@ -207,6 +207,40 @@ export const studyContents = {
         { index: '02', title: '极限与导数定义', summary: '当自变量增量趋近 0。', sourceId: 'source-limit' },
         { index: '03', title: '几何意义', summary: '导数等于切线斜率。', sourceId: 'source-tangent' },
       ],
+      /**
+       * 演示模式的自测题（团队原创，与本章正文对得上）。
+       *
+       * 后端是从「抽出的概念」自动出题的；演示数据里没有概念抽取这一步，
+       * 所以这里直接写好，形状与后端 `/quiz` **完全一致**（含 `answerIndex`，
+       * 由 api.js 在下发时剥掉）。不这么做的话，演示模式下自测永远是「未计入」，
+       * 而掌握度里那 25% 恰恰是最该被演示出来的东西。
+       */
+      quiz: {
+        model: 'demo',
+        questions: [
+          {
+            id: 'ch2-q1',
+            kind: 'cloze',
+            prompt: '把 Δy / Δx 看成「每前进一小步，y 平均改变多少」，这个量描述一段区间内的整体表现，称为 ____。',
+            options: ['平均变化率', '瞬时速度', '切线斜率', '函数值'],
+            answerIndex: 0,
+          },
+          {
+            id: 'ch2-q2',
+            kind: 'cloze',
+            prompt: '当观察区间越来越小，平均变化率若稳定地趋向一个数，这个数就是该点处的 ____。',
+            options: ['平均速度', '瞬时变化率', '函数增量', '定义域'],
+            answerIndex: 1,
+          },
+          {
+            id: 'ch2-q3',
+            kind: 'cloze',
+            prompt: '汽车在 10:00–10:01 行驶 60m，算出的 1m/s 描述的是这一分钟内的 ____。',
+            options: ['瞬时速度', '加速度', '平均速度', '位移'],
+            answerIndex: 2,
+          },
+        ],
+      },
     },
   },
 };

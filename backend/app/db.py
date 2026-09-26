@@ -110,6 +110,14 @@ CREATE TABLE IF NOT EXISTS ocr_tasks (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS quizzes (
+  book_id TEXT NOT NULL,
+  chapter_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (book_id, chapter_id)
+);
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
   book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
@@ -369,6 +377,7 @@ class Database:
             for table in (
                 "threads",
                 "notes",
+                "quizzes",
                 "learning_events",
                 "concepts",
                 "chapter_progress",
@@ -719,6 +728,23 @@ class Database:
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT payload,model FROM concepts WHERE book_id=? AND chapter_id=?",
+                (book_id, chapter_id),
+            ).fetchone()
+            return {"payload": json.loads(row["payload"]), "model": row["model"]} if row else None
+
+    # ---------- 自测题（缓存） ----------
+    def upsert_quiz(self, book_id: str, chapter_id: str, payload: Dict[str, Any], model: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO quizzes(book_id,chapter_id,payload,model,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (book_id, chapter_id, json.dumps(payload, ensure_ascii=False), model, _now()),
+            )
+
+    def get_quiz(self, book_id: str, chapter_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT payload,model FROM quizzes WHERE book_id=? AND chapter_id=?",
                 (book_id, chapter_id),
             ).fetchone()
             return {"payload": json.loads(row["payload"]), "model": row["model"]} if row else None
