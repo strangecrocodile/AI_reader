@@ -39,6 +39,7 @@ export default function Reader({
   focusId,
   onSelect,
   onRead,
+  onPageChange,
   chapters = [],
   currentChapterId,
   onSelectChapter,
@@ -56,6 +57,16 @@ export default function Reader({
 
   const paragraphs = content.paragraphs;
   const paginated = viewMode === PAGE_MODE;
+
+  /** 锚点 → 页码。右侧的「翻译本页」要知道读者正停在哪一页的正文上。 */
+  const anchorPages = useMemo(() => {
+    const map = new Map();
+    for (const para of paragraphs ?? []) {
+      const id = anchorIdOf(para);
+      if (id && para.page) map.set(id, para.page);
+    }
+    return map;
+  }, [paragraphs]);
 
   const pages = useMemo(() => packIntoPages(items, PAGE_HEIGHT), [items]);
   const totalPages = pages.length;
@@ -129,29 +140,42 @@ export default function Reader({
 
   // 可见性上报：段落进入视口即算「读过」（同一段只上报一次）
   useEffect(() => {
-    if (!onRead || typeof IntersectionObserver === 'undefined') return undefined;
+    if (typeof IntersectionObserver === 'undefined') return undefined;
     const nodes = paperRef.current?.querySelectorAll('[data-source-id]');
     if (!nodes?.length) return undefined;
+    const order = new Map(Array.from(nodes).map((node, index) => [node, index]));
     const reported = new Set();
     const observer = new IntersectionObserver(
       (entries) => {
         const fresh = [];
+        const visible = [];
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
           const anchorId = entry.target?.dataset?.sourceId;
-          if (anchorId && !reported.has(anchorId)) {
+          if (!anchorId) continue;
+          visible.push(anchorId);
+          if (!reported.has(anchorId)) {
             reported.add(anchorId);
             fresh.push(anchorId);
           }
         }
-        if (fresh.length) onRead(fresh);
+        if (fresh.length && onRead) onRead(fresh);
+        // 「当前页」取这批可见段落里**最靠前**的那一段所在的页：结构化视图没有真实
+        // 页码，读者看的是一列段落，只能这样推。按 DOM 顺序排（不依赖回调顺序）。
+        if (onPageChange && visible.length) {
+          const first = entries
+            .filter((entry) => entry.isIntersecting && entry.target?.dataset?.sourceId)
+            .sort((a, b) => (order.get(a.target) ?? 0) - (order.get(b.target) ?? 0))[0];
+          const page = anchorPages.get(first?.target?.dataset?.sourceId);
+          if (page) onPageChange(page);
+        }
       },
       { threshold: 0.25, rootMargin: '0px 0px -10% 0px' },
     );
     nodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
     // current / paginated：分页时换页会改变哪些段落真正可见，需要重新观察
-  }, [content, onRead, current, paginated]);
+  }, [anchorPages, content, onRead, onPageChange, current, paginated]);
 
   const goToPage = useCallback(
     (index) => {

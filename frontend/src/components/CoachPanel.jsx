@@ -1,11 +1,26 @@
 import { useState } from 'react';
 import QuizPanel from './QuizPanel.jsx';
 import SegmentText from './SegmentText.jsx';
+import { SummaryTool, TranslateTool } from './ReaderTools.jsx';
 
 /**
- * AI 讲解侧栏：顶部 Tab（AI 讲解 / 知识点大纲）+ 讲解内容 + 追问线程与问答区。
- * 顶部还展示由学习事件算出的掌握度及其构成（见 services/progress.js）。
+ * 右侧边栏：**阅读工具** + 学习记录。
+ *
+ * 上面一行是工具（AI 讲解 / 知识点大纲 / 追问 / 翻译 / 总结）——都是「读的时候顺手用一下」
+ * 的动作，作用对象是读者眼前的原文；下面依次是追问线程、章末自测、我的笔记，
+ * 它们是**记录与导航**，不该被工具切换藏起来，所以在下面常驻。
+ *
+ * 提问仍然从底部输入框发起（无论当前在哪个工具页），发出去之后自动切到「追问」页：
+ * 回答落在追问页里，不切过去的话用户会以为没反应。
  */
+const TABS = [
+  { id: 'explain', label: 'AI 讲解' },
+  { id: 'outline', label: '知识点大纲' },
+  { id: 'ask', label: '追问' },
+  { id: 'translate', label: '翻译' },
+  { id: 'summary', label: '总结' },
+];
+
 export default function CoachPanel({
   content,
   thread,
@@ -26,8 +41,24 @@ export default function CoachPanel({
   onAnswerQuiz,
   clearSelected,
   onFocusSource,
+  currentPage,
+  translate,
+  summary,
+  onTranslate,
+  onSummarize,
+  onCancelTool,
 }) {
   const [tab, setTab] = useState('explain');
+
+  const askAndFollow = (question) => {
+    setTab('ask');
+    onAsk(question);
+  };
+
+  const openThread = (id) => {
+    setTab('ask');
+    onSelectThread(id);
+  };
 
   return (
     <aside className="coach">
@@ -36,12 +67,17 @@ export default function CoachPanel({
         <h2>{content.heading}</h2>
         <MasteryPanel progress={progress} onComplete={onComplete} />
         <div className="tabs" role="tablist">
-          <button className={`tab${tab === 'explain' ? ' active' : ''}`} onClick={() => setTab('explain')} role="tab">
-            AI 讲解
-          </button>
-          <button className={`tab${tab === 'outline' ? ' active' : ''}`} onClick={() => setTab('outline')} role="tab">
-            知识点大纲
-          </button>
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              className={`tab${tab === item.id ? ' active' : ''}`}
+              onClick={() => setTab(item.id)}
+              role="tab"
+              aria-selected={tab === item.id}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
       </div>
       <div className="coach-scroll">
@@ -69,7 +105,9 @@ export default function CoachPanel({
               ),
             )}
           </div>
-        ) : (
+        ) : null}
+
+        {tab === 'outline' ? (
           <div className="tab-content" role="tabpanel">
             {content.outline.map((item) => (
               <button key={item.index} className="outline-item" onClick={() => onFocusSource(item.sourceId)}>
@@ -81,8 +119,44 @@ export default function CoachPanel({
               </button>
             ))}
           </div>
-        )}
-        <ThreadList threads={threads} activeId={thread?.id} onSelect={onSelectThread} onDelete={onDeleteThread} />
+        ) : null}
+
+        {tab === 'ask' ? (
+          <div className="tab-content" role="tabpanel">
+            <Chat chat={thread?.messages ?? []} onOpenSource={onOpenSource} />
+            {(thread?.messages ?? []).length === 0 ? (
+              <p className="tool-hint">
+                在原文里拖选一段再问，或者直接用下面的输入框提问；每段划词会单独成一条追问线程。
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {tab === 'translate' ? (
+          <div className="tab-content" role="tabpanel">
+            <TranslateTool
+              selected={selected}
+              currentPage={currentPage}
+              state={translate}
+              onRun={onTranslate}
+              onCancel={onCancelTool}
+            />
+          </div>
+        ) : null}
+
+        {tab === 'summary' ? (
+          <div className="tab-content" role="tabpanel">
+            <SummaryTool
+              selected={selected}
+              state={summary}
+              onRun={onSummarize}
+              onCancel={onCancelTool}
+              onOpenSource={onOpenSource}
+            />
+          </div>
+        ) : null}
+
+        <ThreadList threads={threads} activeId={thread?.id} onSelect={openThread} onDelete={onDeleteThread} />
         <QuizPanel quiz={quiz} onAnswer={onAnswerQuiz} />
         <NotesList
           notes={notes}
@@ -90,13 +164,12 @@ export default function CoachPanel({
           onUpdate={onUpdateNote}
           onDelete={onDeleteNote}
         />
-        <Chat chat={thread?.messages ?? []} onOpenSource={onOpenSource} />
       </div>
       <AskBox
         selected={selected}
         thread={thread}
         asking={asking}
-        onAsk={onAsk}
+        onAsk={askAndFollow}
         onCreateNote={onCreateNote}
         onClear={clearSelected}
       />

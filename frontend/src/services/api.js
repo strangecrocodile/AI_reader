@@ -420,6 +420,71 @@ export const api = {
     await readEventStream(res.body, { onDelta, onDone });
   },
 
+  // ---------- 阅读工具：翻译 / 总结 ----------
+
+  /**
+   * 翻译：有 `selectedText` 就译那段，否则译 `page` 那一页的正文段落。
+   *
+   * 逐段流式（`onDelta(text, data)` 的 `data.anchorId` 指明这段译文属于哪一段原文），
+   * 所以长页面也是「译完一段显示一段」，不必等整页。
+   */
+  async translateStream({ bookId, chapterId, selectedText, anchorId, page, target }, handlers = {}) {
+    const { onDelta, onDone, onMeta, signal } = handlers;
+    if (!useBackend()) {
+      return demoTranslateStream({ bookId, chapterId, selectedText, page }, handlers);
+    }
+    const res = await fetch(`${apiBase}/api/tools/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({
+        bookId,
+        chapterId,
+        selectedText: selectedText || '',
+        anchorId: anchorId || '',
+        page: page ?? null,
+        target: target || null,
+      }),
+      signal,
+    });
+    if (!res.ok || !res.body) throw new Error(await failureDetail(res, `翻译失败（${res.status}）`));
+    await readEventStream(res.body, { onDelta, onDone, onMeta });
+  },
+
+  /** 总结：有 `selectedText` 就总结那段，否则总结整章。 */
+  async summarizeStream({ bookId, chapterId, selectedText, anchorId }, handlers = {}) {
+    const { onDelta, onDone, onMeta, onProgress, signal } = handlers;
+    if (!useBackend()) {
+      return demoSummarizeStream({ bookId, chapterId, selectedText }, handlers);
+    }
+    const res = await fetch(`${apiBase}/api/tools/summarize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({
+        bookId,
+        chapterId,
+        selectedText: selectedText || '',
+        anchorId: anchorId || '',
+      }),
+      signal,
+    });
+    if (!res.ok || !res.body) throw new Error(await failureDetail(res, `总结失败（${res.status}）`));
+    await readEventStream(res.body, { onDelta, onDone, onMeta, onProgress });
+  },
+
+  /**
+   * 本章已缓存的总结。**这里不会触发生成**：生成要几十秒、能看进度也能取消，
+   * 不该藏在一次 GET 里（后端的理由见 routers/tools.py）。
+   */
+  async fetchChapterSummary(bookId, chapterId) {
+    if (!useBackend()) return { summary: '', sources: [], sourceDetails: [], cached: false };
+    try {
+      return await request(`/api/books/${bookId}/chapters/${chapterId}/summary`);
+    } catch {
+      // 读不到缓存不是错误：面板显示「还没有总结」即可，别让整个侧栏报错
+      return { summary: '', sources: [], sourceDetails: [], cached: false };
+    }
+  },
+
   /** 本章的追问线程列表（最近追问的在前）。 */
   async fetchThreads(bookId, chapterId) {
     if (useBackend()) {
@@ -535,6 +600,100 @@ export const api = {
   },
 };
 
+/**
+ * 演示模式下的翻译。
+ *
+ * 演示模式**没有模型**，所以译不出来——这里如实返回「未翻译」并给出原文，
+ * 与后端无 Key 时的口径完全一致（编一段像译文的中文是最坏的结果：
+ * 用户会以为那就是原文的意思）。真正要看翻译得连上后端并配好 Key。
+ */
+async function demoTranslateStream({ bookId, chapterId, selectedText, page }, { onDelta, onDone, onMeta } = {}) {
+  const paragraphs = demoParagraphs(bookId, chapterId, { selectedText, page });
+  const scope = selectedText ? 'selection' : 'page';
+  onMeta?.({ scope, target: 'zh', page: page ?? null, paragraphs });
+  await delay(120);
+  onDelta?.('');
+  onDone?.({
+    scope,
+    target: 'zh',
+    page: page ?? null,
+    translations: paragraphs.map((p) => ({
+      anchorId: p.anchorId,
+      page: p.page,
+      source: p.source,
+      text: '',
+    })),
+    notice: '（演示模式没有接入模型，无法翻译。下面是原文，请自行对照阅读。）',
+  });
+}
+
+/**
+ * 演示模式下的总结：按段落首句抽取（与后端无模型时的规则摘要同一套做法），
+ * 并标明这不是模型写的。演示数据只有一章有正文，所以这里也只在那一章有结果。
+ */
+async function demoSummarizeStream({ bookId, chapterId, selectedText }, { onDelta, onDone, onMeta } = {}) {
+  const scope = selectedText ? 'selection' : 'chapter';
+  const sources = demoParagraphs(bookId, chapterId, { selectedText });
+  const heads = sources
+    .map((p) => firstSentenceOf(p.source))
+    .filter(Boolean)
+    .slice(0, 6);
+  const summary = heads.length
+    ? [`这部分内容共 ${sources.length} 段，以下是各段首句：`, ...heads.map((h) => `- ${h}`)].join('\n')
+    : '';
+  onMeta?.({ scope, chunkCount: 1, paragraphCount: sources.length, totalParagraphs: sources.length, pages: [] });
+  for (const piece of chunkText(summary)) {
+    onDelta?.(piece);
+    await delay(DEMO_STREAM_INTERVAL);
+  }
+  onDone?.({
+    scope,
+    summary,
+    sources: sources.map((p) => p.anchorId).filter(Boolean).slice(0, 6),
+    sourceDetails: sources.slice(0, 6).map((p) => ({
+      id: p.anchorId,
+      page: p.page,
+      chapterTitle: '',
+      text: p.source,
+      crossChapter: false,
+    })),
+    notice: '（演示模式没有接入模型，以下是按段落首句抽取的规则摘要。）',
+  });
+}
+
+/** 演示数据里可用的正文段落（锚点 + 原文），供两个工具在本地拼出同样的形状。 */
+function demoParagraphs(bookId, chapterId, { selectedText = '', page = null } = {}) {
+  if (selectedText) return [{ anchorId: '', page: null, source: selectedText }];
+  const content = studyContents[bookId]?.[chapterId];
+  const paragraphs = content?.paragraphs ?? [];
+  const out = [];
+  for (const para of paragraphs) {
+    const source = demoTextOf(para);
+    if (!source) continue;
+    if (page != null && para.page != null && para.page !== page) continue;
+    out.push({ anchorId: para.id ?? '', page: para.page ?? null, source });
+  }
+  return out.slice(0, 12);
+}
+
+function demoTextOf(para) {
+  if (para.type === 'p' || para.type === 'formula') {
+    const parts = [];
+    for (const seg of para.segs ?? []) {
+      if (seg?.v) parts.push(seg.v);
+      for (const inner of seg?.segs ?? []) if (inner?.v) parts.push(inner.v);
+    }
+    return parts.join('');
+  }
+  return '';
+}
+
+function firstSentenceOf(text) {
+  const clean = String(text || '').trim();
+  const at = clean.search(/[。！？.!?]/);
+  return at > 0 && at <= 90 ? clean.slice(0, at + 1) : clean.slice(0, 90);
+}
+
 const DEMO_STREAM_CHUNK = 8;
 const DEMO_STREAM_INTERVAL = 45;
 
@@ -560,8 +719,12 @@ function parseEventFrame(frame) {
   }
 }
 
-/** 读取 fetch 的 SSE 流：meta → delta* → done（或 error）。 */
-async function readEventStream(body, { onDelta, onDone } = {}) {
+/** 读取 fetch 的 SSE 流：meta → delta* → progress* → done（或 error）。
+ *
+ * `onDelta` 的第二个参数是整条事件数据：问答只用到 `text`，翻译还要读 `anchorId`
+ * 才能把每段译文挂回它对应的原文段落。
+ */
+async function readEventStream(body, { onDelta, onDone, onMeta, onProgress } = {}) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -575,7 +738,9 @@ async function readEventStream(body, { onDelta, onDone } = {}) {
       for (const frame of frames) {
         const parsed = parseEventFrame(frame);
         if (!parsed) continue;
-        if (parsed.event === 'delta') onDelta?.(parsed.data.text ?? '');
+        if (parsed.event === 'delta') onDelta?.(parsed.data.text ?? '', parsed.data);
+        else if (parsed.event === 'meta') onMeta?.(parsed.data);
+        else if (parsed.event === 'progress') onProgress?.(parsed.data);
         else if (parsed.event === 'done') onDone?.(parsed.data);
         else if (parsed.event === 'error') throw new Error(parsed.data.message || '流式回答失败');
       }

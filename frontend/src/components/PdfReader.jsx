@@ -47,6 +47,7 @@ export default function PdfReader({
   focusId,
   onSelect,
   onRead,
+  onPageChange,
   onError,
   notedAnchorIds,
   chapters = [],
@@ -129,6 +130,15 @@ export default function PdfReader({
   useEffect(() => {
     writeZoom(zoom);
   }, [zoom]);
+
+  // 当前页报给上层：右侧的「翻译本页」要知道读者正停在哪一页。
+  //
+  // 报的是**段落页码那一套**（= 扫描件的印刷页码），不是 PDF 页序：
+  // 后端的段落 `page` 就是印刷页码，翻译按它取正文。两者的差由 pageOffset 承担
+  // （见 utils/anchorPage.js 的 pdfPageOf，那边是反着换算）。
+  useEffect(() => {
+    if (current) onPageChange?.(current + (content.pageOffset ?? 0));
+  }, [current, content.pageOffset, onPageChange]);
 
   // ---- 当前页 + 已读上报 ----
   //

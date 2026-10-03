@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Reader, { PAGE_MODE, SCROLL_MODE } from '../components/Reader.jsx';
+import { toolIdleState } from '../components/ReaderTools.jsx';
 import CoachPanel from '../components/CoachPanel.jsx';
 import SelectionBubble from '../components/SelectionBubble.jsx';
 import StateCard from '../components/StateCard.jsx';
@@ -99,6 +100,28 @@ export default function StudyPage() {
   const [asking, setAsking] = useState(false);
   const [progress, setProgress] = useState(null);
   const [focusId, setFocusId] = useState(null);
+  /**
+   * 读者当前停在原书的第几页。
+   *
+   * `reportedPage` 由阅读面按可见内容上报（原版视图按页、结构化视图按最上面的段落）；
+   * 还没读到任何东西时退回**本章起始页**——右侧的「翻译本页」总要有个明确的页可译，
+   * 空着比猜一个更糟（老浏览器没有 IntersectionObserver 时就是这种情形）。
+   */
+  const [reportedPage, setReportedPage] = useState(null);
+  const currentPage = reportedPage ?? content?.page ?? null;
+  const [translate, setTranslate] = useState(() => toolIdleState());
+  const [summary, setSummary] = useState(() => toolIdleState());
+  /**
+   * 工具的流式生成都挂在这一个 AbortController 上：切范围、换章、点「停止」时，
+   * 上一次生成必须真的停下来——跑着的大模型请求会继续吃 token 和带宽。
+   *
+   * 声明得比用它的 effect 早：依赖数组是在渲染途中求值的，写在后面会撞上 TDZ。
+   */
+  const toolAbort = useRef(null);
+  const abortTool = useCallback(() => {
+    toolAbort.current?.abort();
+    toolAbort.current = null;
+  }, []);
   const clearTimer = useRef(null);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
@@ -176,6 +199,40 @@ export default function StudyPage() {
     };
   }, [bookId, chapterId, report, reloadKey]);
 
+  /**
+   * 换章时把工具面板复位，并把**已缓存的本章总结**读回来。
+   *
+   * 读回缓存这点很关键：总结要几十秒，重开同一章不该再等一遍，也不该再花一次模型调用。
+   * 缓存由后端在后端落库（见 services/tools.py），前端不自己存。
+   */
+  useEffect(() => {
+    abortTool();
+    setTranslate(toolIdleState());
+    setSummary(toolIdleState());
+    setReportedPage(null);
+    let cancelled = false;
+    api
+      .fetchChapterSummary(bookId, chapterId)
+      .then((data) => {
+        if (cancelled || !data?.cached || !data.summary) return;
+        setSummary((prev) => ({
+          ...prev,
+          status: 'done',
+          scope: 'chapter',
+          cached: true,
+          summary: data.summary,
+          sources: data.sources ?? [],
+          sourceDetails: data.sourceDetails ?? [],
+        }));
+      })
+      .catch(() => {
+        // 读不到缓存不是错误：面板显示「还没有总结」，用户可以再生成一次
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, chapterId, abortTool]);
+
   // 锚点定位：设置 focusId，并在短暂高亮后自动清除
   const focusSource = useCallback(
     (id, label) => {
@@ -209,6 +266,165 @@ export default function StudyPage() {
   }, []);
 
   const clearSelected = useCallback(() => setSelected(null), []);
+
+  // ---------- 阅读工具：翻译 / 总结 ----------
+  // `abortTool` 声明在顶部 state 区（依赖数组在渲染途中求值，写在后面会撞 TDZ）；
+  // 这里只负责组件卸载时把还在跑的那次生成停掉。
+
+  useEffect(() => abortTool, [abortTool]);
+
+  /**
+   * AI 翻译。范围只有「选中原文」与「本页」两种——整章几百段逐段翻译既慢又贵，
+   * 后端也只接受这两种（见 services/tools.py 的范围说明）。
+   */
+  const handleTranslate = useCallback(
+    async ({ scope, target } = {}) => {
+      const useSelection = scope === 'selection';
+      if (useSelection && !selected?.text) {
+        setTranslate((prev) => ({ ...prev, scope: 'selection', error: '', notice: '先在原文里选中一段文字。' }));
+        return;
+      }
+      if (!useSelection && currentPage == null) {
+        setTranslate((prev) => ({ ...prev, scope: 'page', error: '', notice: '还没读到某一页，滚动一下原文再试。' }));
+        return;
+      }
+      abortTool();
+      const controller = new AbortController();
+      toolAbort.current = controller;
+      const nextTarget = target ?? translate.target ?? '';
+      setTranslate((prev) => ({
+        ...toolIdleState(prev),
+        status: 'running',
+        scope: useSelection ? 'selection' : 'page',
+        target: nextTarget,
+        page: useSelection ? null : currentPage,
+        entries: [],
+        notice: '',
+        error: '',
+      }));
+      try {
+        await api.translateStream(
+          {
+            bookId,
+            chapterId,
+            selectedText: useSelection ? selected.text : '',
+            anchorId: useSelection ? selected.anchorId : '',
+            page: useSelection ? null : currentPage,
+            target: nextTarget,
+          },
+          {
+            signal: controller.signal,
+            onMeta: (meta) => {
+              // meta 先到：把「要译哪几段」摆出来，逐段译文再往上填。
+              // 这样长页面也是「译完一段显示一段」，而不是等整页译完才出字。
+              setTranslate((prev) => ({
+                ...prev,
+                scope: meta.scope,
+                target: meta.target,
+                page: meta.page ?? prev.page,
+                entries: (meta.paragraphs ?? []).map((p) => ({
+                  anchorId: p.anchorId,
+                  page: p.page,
+                  source: p.source,
+                  text: '',
+                  streaming: true,
+                })),
+              }));
+            },
+            onDelta: (text, data) => {
+              setTranslate((prev) => ({
+                ...prev,
+                entries: prev.entries.map((entry, index) =>
+                  entry.anchorId === data?.anchorId || (prev.entries.length === 1 && index === 0)
+                    ? { ...entry, text: (entry.text ?? '') + (text ?? '') }
+                    : entry,
+                ),
+              }));
+            },
+            onDone: (payload) => {
+              setTranslate((prev) => ({
+                ...prev,
+                status: 'done',
+                target: payload.target ?? prev.target,
+                entries: (payload.translations ?? prev.entries).map((item) => ({
+                  anchorId: item.anchorId,
+                  page: item.page,
+                  source: item.source,
+                  text: item.text,
+                  streaming: false,
+                })),
+                notice: payload.notice || '',
+                error: '',
+              }));
+            },
+          },
+        );
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setTranslate((prev) => ({ ...prev, status: 'done', error: error.message || '翻译失败' }));
+      } finally {
+        if (toolAbort.current === controller) toolAbort.current = null;
+      }
+    },
+    [abortTool, bookId, chapterId, currentPage, selected, translate.target],
+  );
+
+  /** AI 总结：整章（后端会缓存）或选中的原文。 */
+  const handleSummarize = useCallback(
+    async ({ scope } = {}) => {
+      const useSelection = scope === 'selection';
+      if (useSelection && !selected?.text) {
+        setSummary((prev) => ({ ...prev, scope: 'selection', error: '', notice: '先在原文里选中一段文字。' }));
+        return;
+      }
+      abortTool();
+      const controller = new AbortController();
+      toolAbort.current = controller;
+      setSummary((prev) => ({
+        ...toolIdleState(prev),
+        status: 'running',
+        scope: useSelection ? 'selection' : 'chapter',
+        summary: '',
+        notice: '',
+        error: '',
+        pages: [],
+      }));
+      try {
+        await api.summarizeStream(
+          {
+            bookId,
+            chapterId,
+            selectedText: useSelection ? selected.text : '',
+            anchorId: useSelection ? selected.anchorId : '',
+          },
+          {
+            signal: controller.signal,
+            onMeta: (meta) => setSummary((prev) => ({ ...prev, ...meta, notice: meta.notice || '' })),
+            onProgress: (progress) => setSummary((prev) => ({ ...prev, progress })),
+            onDelta: (text) => setSummary((prev) => ({ ...prev, summary: (prev.summary ?? '') + (text ?? '') })),
+            onDone: (payload) =>
+              setSummary((prev) => ({
+                ...prev,
+                status: 'done',
+                summary: payload.summary ?? prev.summary,
+                sources: payload.sources ?? [],
+                sourceDetails: payload.sourceDetails ?? [],
+                notice: payload.notice || prev.notice,
+                // 章总结在后端落库；下次重开这一章直接读回，不再花一次模型调用
+                cached: payload.scope === 'chapter' ? true : prev.cached,
+                error: '',
+              })),
+          },
+        );
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setSummary((prev) => ({ ...prev, status: 'done', error: error.message || '总结失败' }));
+      } finally {
+        if (toolAbort.current === controller) toolAbort.current = null;
+      }
+    },
+    [abortTool, bookId, chapterId, selected],
+  );
 
   /** 读到过的段落上报（Reader 的可见性观察结果）。 */
   const handleRead = useCallback(
@@ -646,6 +862,7 @@ export default function StudyPage() {
                 focusId={focusId}
                 onSelect={handleSelect}
                 onRead={handleRead}
+                onPageChange={setReportedPage}
                 onError={handlePdfError}
                 chapters={chapters}
                 currentChapterId={chapterId}
@@ -663,6 +880,7 @@ export default function StudyPage() {
               focusId={focusId}
               onSelect={handleSelect}
               onRead={handleRead}
+              onPageChange={setReportedPage}
               chapters={chapters}
               currentChapterId={chapterId}
               onSelectChapter={handleSelectChapter}
@@ -693,6 +911,12 @@ export default function StudyPage() {
           onAnswerQuiz={handleAnswerQuiz}
           clearSelected={clearSelected}
           onFocusSource={focusSource}
+          currentPage={currentPage}
+          translate={translate}
+          summary={summary}
+          onTranslate={handleTranslate}
+          onSummarize={handleSummarize}
+          onCancelTool={abortTool}
         />
       </div>
       <SelectionBubble

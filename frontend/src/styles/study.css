@@ -369,6 +369,160 @@
   font: 12px var(--font-mono);
 }
 
+/* ---------- 右侧边栏的阅读工具（翻译 / 总结） ---------- */
+.tool-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 工具行：左边一个标签，右边一组按钮。窄栏里用换行而不是压缩按钮 */
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tool-label {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tool-choice {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.tool-choice button {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.tool-choice button.active {
+  border-color: rgba(0, 102, 204, 0.45);
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.tool-choice button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tool-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tool-hint,
+.tool-notice,
+.tool-error,
+.tool-progress {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.tool-hint {
+  background: rgba(118, 118, 128, 0.08);
+  color: var(--muted);
+}
+
+.tool-notice {
+  background: rgba(255, 159, 10, 0.1);
+  color: #9a5a00;
+}
+
+.tool-error {
+  background: rgba(215, 0, 21, 0.08);
+  color: var(--danger);
+}
+
+.tool-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(0, 102, 204, 0.07);
+  color: var(--green);
+}
+
+/* 译文逐段对照原文：左原文右译文不方便（栏窄），改成上下成对 */
+.tool-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.translate-pair {
+  border-left: 2px solid rgba(0, 102, 204, 0.25);
+  padding-left: 10px;
+}
+
+.translate-source {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.translate-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.pair-page {
+  margin-right: 6px;
+  color: #86868b;
+  font: 11px var(--font-mono);
+}
+
+.summary-body {
+  font-size: 14px;
+  line-height: 1.85;
+}
+
+.summary-overview {
+  margin: 0 0 8px;
+  font-weight: 700;
+}
+
+.summary-line {
+  margin: 0 0 6px;
+  padding-left: 14px;
+  position: relative;
+}
+
+/* 要点前的圆点自己画：默认列表样式在这套排版里对不齐 */
+.summary-line::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.68em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(0, 102, 204, 0.65);
+}
+
 /* ---------- 右栏：AI 讲解 ---------- */
 .coach {
   background: rgba(255, 255, 255, 0.82);
