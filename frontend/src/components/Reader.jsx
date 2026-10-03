@@ -54,6 +54,14 @@ export default function Reader({
   const scrolledForRef = useRef(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [items, setItems] = useState(EMPTY_ITEMS);
+  /**
+   * 正在读的这一页（原书页码）。
+   *
+   * 以前这里显示的是 `content.page`——整章的起始页，翻完 76 页它都不会变。现在由
+   * 可见段落反推（见下面 onPageChange 那一段），页脚的数字才真的跟着走。
+   * 一页内容还没读到时先用章节起始页兜底。
+   */
+  const [readingPage, setReadingPage] = useState(content.page ?? null);
 
   const paragraphs = content.paragraphs;
   const paginated = viewMode === PAGE_MODE;
@@ -138,7 +146,12 @@ export default function Reader({
     return undefined;
   }, [focusId, paginated, anchorBlock, pages, current]);
 
-  // 可见性上报：段落进入视口即算「读过」（同一段只上报一次）
+  // 换章时把页脚的数字先摆回本章起始页，免得上一章的页码停在那儿
+  useLayoutEffect(() => {
+    setReadingPage(content.page ?? null);
+  }, [content]);
+
+  // ---- 可见性上报：段落进入视口即算「读过」（同一段只上报一次） ----
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return undefined;
     const nodes = paperRef.current?.querySelectorAll('[data-source-id]');
@@ -162,12 +175,15 @@ export default function Reader({
         if (fresh.length && onRead) onRead(fresh);
         // 「当前页」取这批可见段落里**最靠前**的那一段所在的页：结构化视图没有真实
         // 页码，读者看的是一列段落，只能这样推。按 DOM 顺序排（不依赖回调顺序）。
-        if (onPageChange && visible.length) {
+        if (visible.length) {
           const first = entries
             .filter((entry) => entry.isIntersecting && entry.target?.dataset?.sourceId)
             .sort((a, b) => (order.get(a.target) ?? 0) - (order.get(b.target) ?? 0))[0];
           const page = anchorPages.get(first?.target?.dataset?.sourceId);
-          if (page) onPageChange(page);
+          if (page) {
+            setReadingPage(page);
+            onPageChange?.(page);
+          }
         }
       },
       { threshold: 0.25, rootMargin: '0px 0px -10% 0px' },
@@ -204,6 +220,10 @@ export default function Reader({
 
   // 分页模式：外层裁切成「一页高」，内层整体上移，把当前页顶到最上面。
   // 位移为 0 时不加 transform——多层空 transform 会平白多出一层包含块。
+  //
+  // 纸的高度**不再用内联 magic number 撑**（以前是 `bodyHeight + 130`，那个数是按
+  // 页码在顶部时估的）：纸张高度改由内容决定（页眉 + 被裁切的正文 + 页脚页码），
+  // 页脚挪到底部之后就永远不会被卡片裁掉或溢出到卡片外。
   const bodyHeight = paginated ? pageClipHeight(items, page, PAGE_HEIGHT) : undefined;
   const bodyShift = paginated ? -(items[page?.start]?.top ?? 0) : 0;
 
@@ -250,14 +270,12 @@ export default function Reader({
       <div
         ref={paperRef}
         className={`paper${paginated ? ' paginated' : ''}`}
-        style={paginated ? { height: `calc(${bodyHeight}px + 130px)` } : undefined}
         data-testid="paper"
         onMouseUp={handleMouseUp}
         onKeyDown={handleKeyDown}
         aria-label={`教材第 ${content.page} 页 · ${content.heading}`}
         tabIndex={0}
       >
-        <div className="page-num">— {content.page} —</div>
         <h2>{content.heading}</h2>
         <div ref={bodyRef} className="paper-body" style={bodyHeight ? { height: bodyHeight } : undefined}>
           <div
@@ -276,6 +294,11 @@ export default function Reader({
               />
             ))}
           </div>
+        </div>
+        {/* 页码在**纸的底部**：和纸质书的页脚一样。放顶部时读者的眼睛在段末，
+            想看自己在第几页得先往上找；数字跟着正在读的段落走，不再是恒定值。 */}
+        <div className="page-num" data-testid="paper-page">
+          — {readingPage ?? content.page ?? '—'} —
         </div>
       </div>
       {paginated && (

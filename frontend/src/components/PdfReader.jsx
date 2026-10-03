@@ -337,6 +337,39 @@ export default function PdfReader({
         </div>
       </div>
 
+      {noTextPages.has(current) ? (
+        <p className="pdf-note">
+          第 {current} 页是扫描图片，页面上没有可选中的文字——这一页的划词提问请切到
+          「结构化」视图，那里是识别出来的文本。问答与溯源不受影响。
+        </p>
+      ) : null}
+
+      <div
+        className={`pdf-pages${single ? ' pdf-single' : ''}`}
+        onMouseUp={handleMouseUp}
+        data-testid="pdf-pages"
+      >
+        {Array.from({ length: pageCount }, (_, index) => index + 1).map((page) => (
+          <PdfPage
+            key={page}
+            page={page}
+            doc={doc}
+            scale={zoom}
+            pageSize={pageSize}
+            active={!single || page === current}
+            width={width}
+            noteCount={notesByPage.get(page) ?? 0}
+            onRendered={handleRendered}
+            pageRefCallback={(node) => {
+              if (node) pageRefs.current.set(page, node);
+              else pageRefs.current.delete(page);
+            }}
+          />
+        ))}
+      </div>
+
+      {/* 页码与翻页放在**最下面**：读书时眼睛在页面底部，页码就该在那儿，
+          和纸质书的页脚一样；顶部留出来只放「去哪儿」的工具。 */}
       <div className="pdf-bar">
         <button type="button" onClick={() => goToPage(current - 1)} disabled={current <= 1}>
           ← 上一页
@@ -384,37 +417,6 @@ export default function PdfReader({
         >
           ＋
         </button>
-      </div>
-
-      {noTextPages.has(current) ? (
-        <p className="pdf-note">
-          第 {current} 页是扫描图片，页面上没有可选中的文字——这一页的划词提问请切到
-          「结构化」视图，那里是识别出来的文本。问答与溯源不受影响。
-        </p>
-      ) : null}
-
-      <div
-        className={`pdf-pages${single ? ' pdf-single' : ''}`}
-        onMouseUp={handleMouseUp}
-        data-testid="pdf-pages"
-      >
-        {Array.from({ length: pageCount }, (_, index) => index + 1).map((page) => (
-          <PdfPage
-            key={page}
-            page={page}
-            doc={doc}
-            scale={zoom}
-            pageSize={pageSize}
-            active={!single || page === current}
-            width={width}
-            noteCount={notesByPage.get(page) ?? 0}
-            onRendered={handleRendered}
-            pageRefCallback={(node) => {
-              if (node) pageRefs.current.set(page, node);
-              else pageRefs.current.delete(page);
-            }}
-          />
-        ))}
       </div>
 
       <div className="reader-tip">

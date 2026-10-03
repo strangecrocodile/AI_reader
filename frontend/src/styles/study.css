@@ -1,7 +1,8 @@
 /* ---------- 学习页布局 ---------- */
+/* 学习页没有顶部导航（见 App.jsx），所以高度是整屏，不再减去导航栏那一截 */
 .study {
   padding: 0;
-  height: calc(100vh - 68px);
+  height: 100vh;
   overflow: hidden;
   display: block;
   background: #f5f5f7;
@@ -121,7 +122,8 @@
   text-align: center;
   color: #86868b;
   font: 12px var(--font-mono);
-  margin-bottom: 28px;
+  /* 页脚位置：正文之后留一段白，像纸的页脚 */
+  margin: 44px 0 0;
 }
 
 .paper h2 {
@@ -1454,12 +1456,12 @@
 @media (max-width: 1180px) {
   .study {
     height: auto;
-    min-height: calc(100vh - 68px);
+    min-height: 100vh;
     overflow: visible;
   }
 
   .study-layout {
-    min-height: calc(100vh - 68px);
+    min-height: 100vh;
     grid-template-columns: 1fr;
   }
 

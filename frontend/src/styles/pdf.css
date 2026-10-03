@@ -86,21 +86,23 @@
   color: transparent;
 }
 
-/* ---------- 工具栏 ---------- */
+/* ---------- 页码栏 ----------
+   钉在阅读区**底部**：读书时眼睛在页面底部，页码就该在那儿（和纸质书的页脚一样），
+   顶部只留「去哪儿」的工具（搜索 / 章节导航 / 阅读方式）。 */
 .pdf-bar {
   position: sticky;
-  top: 62px;
+  bottom: 0;
   z-index: 4;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   max-width: 820px;
-  margin: 18px auto 6px;
+  margin: 6px auto 0;
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(251, 251, 253, 0.86);
+  background: rgba(251, 251, 253, 0.92);
   backdrop-filter: saturate(180%) blur(18px);
   color: var(--muted);
   font-size: 13px;

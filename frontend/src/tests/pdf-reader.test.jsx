@@ -195,6 +195,15 @@ describe('原版 PDF 阅读面', () => {
     expect(await screen.findByText('本章第 1–4 页')).toBeInTheDocument();
   });
 
+  it('页码栏在页面**下面**：读书时眼睛在页面底部，页码就该在那儿', async () => {
+    renderReader();
+    await renderAllPages();
+
+    const bar = document.querySelector('.pdf-bar');
+    const pages = screen.getByTestId('pdf-pages');
+    expect(pages.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('页码换算减掉印刷偏移：书上第 9 页要翻到 PDF 第 1 页', async () => {
     renderReader({
       content: { ...CONTENT, pageOffset: 8, page: 9, pageEnd: 12 },
