@@ -394,6 +394,143 @@ class Database:
                 conn.execute(f"DELETE FROM {table} WHERE book_id=?", (book_id,))
             conn.execute("DELETE FROM books WHERE id=?", (book_id,))
 
+    def replace_book_bundle(
+        self,
+        book_id: str,
+        book_fields: Dict[str, Any],
+        chapters: List[Dict[str, Any]],
+        sections: List[Dict[str, Any]],
+        anchors: List[Dict[str, Any]],
+    ) -> Dict[str, int]:
+        """用新解析出来的章节/段落替换某本教材的内容，**单事务**。
+
+        与「删掉再建」的区别在于要保住用户的学习记录。注意 `PRAGMA foreign_keys = ON`
+        而 `chapter_progress` / `learning_events` / `threads` / `notes` / `concepts` 都
+        带 `REFERENCES chapters(id) ON DELETE CASCADE`：**先删章节行再插，等于把这些
+        记录一起级联删光**（`INSERT OR REPLACE` 也一样——它内部就是先删后插）。
+        所以章节一律 UPDATE，只有新解析里不再存在的章节才删，并且**删之前先把会跟着
+        消失的线程/笔记数出来**告诉调用方。
+
+        附带清掉生成物缓存（讲解 / 计划 / 知识点 / 自测）：它们是按旧解析出的段落
+        生成的，留着就是另一种形式的错误溯源。
+        """
+        chapter_ids = [c["id"] for c in chapters]
+        with self.connect() as conn:
+            stale_ids = [
+                row["id"]
+                for row in conn.execute("SELECT id FROM chapters WHERE book_id=?", (book_id,))
+                if row["id"] not in set(chapter_ids)
+            ]
+            dropped = {"threads": 0, "notes": 0}
+            if stale_ids:
+                marks = ",".join("?" * len(stale_ids))
+                for table in ("threads", "notes"):
+                    dropped[table] = conn.execute(
+                        f"SELECT COUNT(*) AS n FROM {table} WHERE chapter_id IN ({marks})",
+                        stale_ids,
+                    ).fetchone()["n"]
+
+            conn.execute(
+                "UPDATE books SET title=?, note=?, content_warning=?, page_offset=? WHERE id=?",
+                (
+                    book_fields["title"],
+                    book_fields.get("note", ""),
+                    book_fields.get("content_warning", ""),
+                    int(book_fields.get("page_offset", 0) or 0),
+                    book_id,
+                ),
+            )
+
+            existing = {
+                row["id"]
+                for row in conn.execute("SELECT id FROM chapters WHERE book_id=?", (book_id,))
+            }
+            added = 0
+            for c in chapters:
+                if c["id"] in existing:
+                    conn.execute(
+                        "UPDATE chapters SET num=?, title=?, page_start=?, page_end=?, full_text=? "
+                        "WHERE id=?",
+                        (
+                            c["num"],
+                            c["title"],
+                            c["page_start"],
+                            c["page_end"],
+                            c["full_text"],
+                            c["id"],
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO chapters(id,book_id,num,title,page_start,page_end,full_text) "
+                        "VALUES(?,?,?,?,?,?,?)",
+                        (
+                            c["id"],
+                            c["book_id"],
+                            c["num"],
+                            c["title"],
+                            c["page_start"],
+                            c["page_end"],
+                            c["full_text"],
+                        ),
+                    )
+                    added += 1
+            if stale_ids:
+                marks = ",".join("?" * len(stale_ids))
+                conn.execute(f"DELETE FROM chapters WHERE id IN ({marks})", stale_ids)
+
+            # 段落与锚点没有指向它们的子表，整表换掉即可
+            conn.execute("DELETE FROM sections WHERE book_id=?", (book_id,))
+            conn.execute("DELETE FROM anchors WHERE book_id=?", (book_id,))
+            for s in sections:
+                conn.execute(
+                    "INSERT INTO sections(id,book_id,chapter_id,seq,text,page,kind,content) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        s["id"],
+                        s["book_id"],
+                        s["chapter_id"],
+                        s["seq"],
+                        s["text"],
+                        s["page"],
+                        s["kind"],
+                        _content_json(s.get("content")),
+                    ),
+                )
+            for a in anchors:
+                conn.execute(
+                    "INSERT INTO anchors(id,book_id,chapter_id,section_id,text,page) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (a["id"], a["book_id"], a["chapter_id"], a["section_id"], a["text"], a["page"]),
+                )
+
+            for table in ("explanations", "plans", "concepts", "quizzes"):
+                conn.execute(f"DELETE FROM {table} WHERE book_id=?", (book_id,))
+        return {
+            "chaptersUpdated": len(chapters) - added,
+            "chaptersAdded": added,
+            "chaptersRemoved": len(stale_ids),
+            "threadsDropped": dropped["threads"],
+            "notesDropped": dropped["notes"],
+        }
+
+    def reanchor(self, note_updates: List[tuple], thread_updates: List[tuple]) -> int:
+        """把笔记/线程的锚点改到新解析出来的段落上（按文本重新匹配的结果）。
+
+        锚点变了但记录本身保留：笔记正文与追问内容都是用户自己写的东西，
+        不能因为重传一本教材就丢；实在匹配不上时锚点置空——列表里还能看、能读，
+        只是不能再「跳回原文」。
+        """
+        changed = 0
+        with self.connect() as conn:
+            for note_id, anchor_id in note_updates:
+                conn.execute("UPDATE notes SET anchor_id=? WHERE id=?", (anchor_id, note_id))
+                changed += 1
+            for thread_id, anchor_id in thread_updates:
+                conn.execute("UPDATE threads SET anchor_id=? WHERE id=?", (anchor_id, thread_id))
+                changed += 1
+        return changed
+
     def set_progress(self, book_id: str, pct: float) -> None:
         with self.connect() as conn:
             conn.execute("UPDATE books SET progress_pct=? WHERE id=?", (pct, book_id))
@@ -644,6 +781,15 @@ class Database:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM threads WHERE id=?", (thread_id,)).fetchone()
             return dict(row) if row else None
+
+    def threads_of_book(self, book_id: str) -> List[Dict[str, Any]]:
+        """整本书的追问线程。重传教材后要挨个重挂锚点，所以需要跨章取一次。"""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM threads WHERE book_id=? ORDER BY updated_at DESC, rowid DESC",
+                (book_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def threads_of_chapter(self, book_id: str, chapter_id: str) -> List[Dict[str, Any]]:
         with self.connect() as conn:

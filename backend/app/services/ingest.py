@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from ..db import Database
 from ..parsing.docx import parse_docx_bytes
-from ..parsing.pdf import parse_pdf_stream
+from ..parsing.pdf import parse_pdf_stream, probe_pdf
 from ..parsing.text import parse_text_bytes
 from . import legacy_doc
 
@@ -369,3 +369,272 @@ def _now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+#: 替换时认出扫描件的提示。P0 不做「替换成扫描件」：识别是异步任务，而替换要求
+#: 「旧的先留着、新的解析成功才动库」，两件事的时序是拧的。不硬凑半成品。
+REPLACE_SCANNED_MESSAGE = (
+    "替换暂不支持扫描件 PDF（识别要跑几十分钟，而替换必须先解析成功才动原教材）。"
+    "请先删除这本教材，再重新上传扫描件"
+)
+
+
+def replace_book_file(
+    db: Database,
+    book_id: str,
+    file_bytes: bytes,
+    filename: str = "",
+    content_type: str = "",
+    settings=None,
+) -> Dict[str, Any]:
+    """用新文件重新解析并替换某本教材的内容，**保住学习记录**。
+
+    存在这条路的理由：老教材入库时还没有「留存原文件」，原版 PDF 阅读面因此打不开。
+    让用户删掉重传的代价是学习事件、追问线程、笔记与掌握度全部清零——那些是用户
+    自己积累的东西，不该为一次功能升级买单。
+
+    顺序刻意做成「先解析成功 → 再动库 → 最后动盘」：
+
+    1. 解析到**临时目录**（插图先落那儿），这一步失败就到此为止，旧教材一个字不动；
+    2. 单事务替换章节/段落/锚点（章节走 UPDATE，理由见 `Database.replace_book_bundle`）；
+    3. 搬插图、删掉旧解析留下的那些，再换原文件；
+    4. 还活着但锚点失效的笔记/线程按文本重挂，对不上的置空并如实计数。
+    """
+    fmt = detect_format(filename, content_type)
+    if fmt is None:
+        raise ValueError(SUPPORTED_MESSAGE)
+    if fmt == PDF:
+        probe = probe_pdf(file_bytes)
+        if probe is not None and probe.scanned:
+            raise ValueError(REPLACE_SCANNED_MESSAGE)
+
+    book = db.get_book(book_id)
+    if book is None:
+        raise LookupError("教材不存在")
+
+    staging = Path(settings.data_dir) / ".replace_tmp" / book_id
+    _remove_tree(staging)
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        # 用同一个 book_id 解析：插图文件名与库里的记录才对得上（见 parsing/assets.py）
+        parsed = parse_bytes(fmt, file_bytes, book["title"] or "未命名教材", staging, book_id)
+        if not parsed.chapters:
+            raise ValueError("未能从文件中识别出章节内容")
+
+        counts = db.replace_book_bundle(
+            book_id,
+            book_row_of(parsed, fmt),
+            *bundle_rows_of(book_id, parsed),
+        )
+        # 先把新插图搬到位并清掉旧解析的残留，再删临时目录
+        _move_assets(staging, Path(settings.assets_dir), book_id, _asset_names(parsed))
+    finally:
+        _remove_tree(staging)
+
+    summary = {**counts, **_restore_anchors(db, book, parsed, book_id)}
+    _swap_source_file(db, settings, book, file_bytes, fmt)
+    return {"book": db.get_book(book_id), "replace": summary}
+
+
+def _swap_source_file(db: Database, settings, book: Dict[str, Any], data: bytes, fmt: str) -> None:
+    """换上新的原文件字节；换了格式就把旧扩展名那份删掉。
+
+    落盘失败只记 warning：教材内容此刻已经换好了，为了「下载原文件」这一个入口
+    把整次替换报成失败，会让用户以为白传了一遍。
+    """
+    old_name = Path(book.get("source_name") or "").name
+    try:
+        new_name = save_source_file(db, settings, book["id"], data, fmt)
+    except OSError as exc:
+        logger.warning("替换后写入原文件失败：%s（%s）", book["id"], exc)
+        return
+    if old_name and old_name != new_name:
+        _unlink(Path(settings.sources_dir) / old_name)
+
+
+def book_row_of(parsed, fmt: str) -> Dict[str, Any]:
+    """替换时写回 books 的字段。书名与进度不在这里——书名沿用原记录，进度压根不动。"""
+    return {
+        "title": parsed.title or "未命名教材",
+        "note": f"来源格式：{fmt}",
+        "content_warning": content_warning_of(parsed),
+        "page_offset": int(getattr(parsed, "page_offset", 0) or 0),
+    }
+
+
+def bundle_rows_of(book_id: str, parsed):
+    """ParsedBook → (章节行, 段落行, 锚点行)。id 规则与 `store_parsed_book` 完全一致。"""
+    chapters: List[Dict[str, Any]] = []
+    sections: List[Dict[str, Any]] = []
+    anchors: List[Dict[str, Any]] = []
+    for chapter in parsed.chapters:
+        chapter_id = f"{book_id}-ch{chapter.num}"
+        chapters.append(
+            {
+                "id": chapter_id,
+                "book_id": book_id,
+                "num": chapter.num,
+                "title": chapter.title,
+                "page_start": chapter.page_start,
+                "page_end": chapter.page_end,
+                "full_text": chapter.full_text,
+            }
+        )
+        for section in chapter.sections:
+            section_id = f"{book_id}-s{chapter.num}-{section.seq}"
+            sections.append(
+                {
+                    "id": section_id,
+                    "book_id": book_id,
+                    "chapter_id": chapter_id,
+                    "seq": section.seq,
+                    "text": section.text,
+                    "page": section.page,
+                    "kind": section.kind,
+                    "content": section.content or {},
+                }
+            )
+            anchors.append(
+                {
+                    "id": section_id,
+                    "book_id": book_id,
+                    "chapter_id": chapter_id,
+                    "section_id": section_id,
+                    "text": section.text,
+                    "page": section.page,
+                }
+            )
+    return chapters, sections, anchors
+
+
+def _asset_names(parsed) -> set:
+    """本次解析产出的插图文件名（来自 `content.asset`）。"""
+    names = set()
+    for chapter in parsed.chapters:
+        for section in chapter.sections:
+            asset = (section.content or {}).get("asset")
+            if asset:
+                names.add(Path(str(asset)).name)
+    return names
+
+
+def _move_assets(staging: Path, assets_dir: Path, book_id: str, keep: set) -> None:
+    """把新插图搬进 assets_dir，并删掉这本书**旧解析**留下的插图。
+
+    「旧的」= 前缀属于这本书、但不在本次产物里的那些；同名的会被新内容覆盖。
+    搬完目录里只剩本次解析真正用到的那几张，不会越换越胖。
+    """
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for path in assets_dir.glob(f"{book_id}-*"):
+        if path.is_file() and path.name not in keep:
+            _unlink(path)
+    for path in staging.glob(f"{book_id}-*"):
+        if not path.is_file():
+            continue
+        try:
+            (assets_dir / path.name).write_bytes(path.read_bytes())
+        except OSError as exc:
+            logger.warning("替换后写入插图失败：%s（%s）", path.name, exc)
+
+
+def _restore_anchors(db: Database, book: Dict[str, Any], parsed, book_id: str) -> Dict[str, int]:
+    """把笔记与追问线程的锚点接到新解析出来的段落上，返回重挂/失锚计数。
+
+    先看**原锚点还在不在**：同一本书重传一次，段落序号通常没变、锚点 id 也就没变，
+    这时一个字段都不该动。只有确实失效了才按文本重找——否则「重传一本没改过的书」
+    都会因为文本匹配的偶然失手而把锚点抹掉。
+
+    文本匹配的口径与前端 `utils/anchorPage.js` 的 `matchAnchorForSelection` 一致
+    （归一化后找包含关系、取最长的那个）：前端划词认锚点、后端重挂锚点，同一套直觉。
+    """
+    alive = {
+        f"{book_id}-s{chapter.num}-{section.seq}"
+        for chapter in parsed.chapters
+        for section in chapter.sections
+    }
+    texts: Dict[str, List[Dict[str, Any]]] = {}
+    for chapter in parsed.chapters:
+        chapter_id = f"{book_id}-ch{chapter.num}"
+        texts[chapter_id] = [
+            {"id": f"{book_id}-s{chapter.num}-{s.seq}", "text": s.text} for s in chapter.sections
+        ]
+
+    counts = {"notesReanchored": 0, "notesUnanchored": 0, "threadsReanchored": 0, "threadsUnanchored": 0}
+    note_updates = []
+    for note in db.notes_of_book(book_id):
+        current = note.get("anchor_id") or ""
+        if current and current in alive:
+            continue
+        found = _match_anchor(texts.get(note.get("chapter_id") or "", []), note.get("quoted_text") or "")
+        if found == current:
+            continue
+        if found:
+            note_updates.append((note["id"], found))
+            counts["notesReanchored"] += 1
+        elif current:
+            # 锚点对不上：笔记正文照旧留着（用户写的东西不能丢），只是不能再跳回原文
+            note_updates.append((note["id"], ""))
+            counts["notesUnanchored"] += 1
+
+    thread_updates = []
+    for thread in db.threads_of_book(book_id):
+        current = thread.get("anchor_id") or ""
+        if current and current in alive:
+            continue
+        found = _match_anchor(
+            texts.get(thread.get("chapter_id") or "", []), thread.get("selected_text") or ""
+        )
+        if found == current:
+            continue
+        thread_updates.append((thread["id"], found))
+        if found:
+            counts["threadsReanchored"] += 1
+        elif current:
+            counts["threadsUnanchored"] += 1
+
+    if note_updates or thread_updates:
+        db.reanchor(note_updates, thread_updates)
+    return counts
+
+
+def _match_anchor(anchors: List[Dict[str, Any]], needle: str) -> str:
+    """在一章的锚点里找回那条笔记/线程对应的段落；找不到给空串。"""
+    target = _normalize_for_match(needle)
+    if len(target) < 4:  # 太短的选择可能哪里都有，不猜
+        return ""
+    best_id = ""
+    best_len = 0
+    for anchor in anchors:
+        text = _normalize_for_match(anchor.get("text") or "")
+        if target in text and len(text) > best_len:
+            best_id = anchor["id"]
+            best_len = len(text)
+    return best_id
+
+
+def _normalize_for_match(value: str) -> str:
+    """归一化：全角转半角、去所有空白、去连字符断词（与前端同一口径）。"""
+    out = []
+    for ch in str(value or ""):
+        code = ord(ch)
+        if 0xFF01 <= code <= 0xFF5E:
+            ch = chr(code - 0xFEE0)
+        if ch.isspace() or ch in "-‐‑‒–—":
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _remove_tree(path: Path) -> None:
+    """删掉临时目录。失败只记一条 warning：一次替换不该因为清理不掉临时文件而失败。"""
+    if not path.exists():
+        return
+    try:
+        for child in sorted(path.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            else:
+                child.rmdir()
+        path.rmdir()
+    except OSError as exc:
+        logger.warning("清理临时目录失败：%s（%s）", path, exc)

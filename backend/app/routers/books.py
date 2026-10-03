@@ -33,6 +33,7 @@ from ..services.ingest import (
     delete_book_files,
     detect_format,
     ingest_file_bytes,
+    replace_book_file,
     source_path_of,
 )
 from ..services.knowledge import get_knowledge
@@ -171,6 +172,53 @@ def get_book_source(book_id: str, request: Request, inline: bool = False):
         filename=path.name,
         content_disposition_type="inline" if inline else "attachment",
     )
+
+
+@router.post("/api/books/{book_id}/replace")
+async def replace_book(
+    book_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """用新文件重新解析并**替换**这本教材的内容，保住学习记录。
+
+    与「删除后重传」的区别只在一点，但很关键：学习事件、追问线程、笔记与掌握度
+    都留着。老教材（留存原文件功能上线前导入的）没有原文件，原版 PDF 阅读面因此
+    打不开，而用户为此要把自己积累的记录一起清零——这条路径就是不让他付这个代价。
+
+    扫描件 PDF 返回 422（见 `ingest.REPLACE_SCANNED_MESSAGE`）：识别是异步任务，
+    与「先解析成功再动原教材」的时序拧着，这一版不硬凑。
+    """
+    db, llm, retrieval, settings = _state(request)
+    data = await file.read()
+    filename = file.filename or ""
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件超过 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB 上限，请分段后再上传",
+        )
+    try:
+        result = replace_book_file(
+            db,
+            book_id,
+            data,
+            filename=filename,
+            content_type=file.content_type or "",
+            settings=settings,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"解析失败：{e}") from e
+
+    # 段落与页码都换过了：旧检索缓存必须清掉，否则问答还会命中上一版的原文
+    retrieval.invalidate_book(book_id)
+    meta = book_meta(db, llm, result["book"])
+    return {**meta, "replace": result["replace"]}
 
 
 @router.delete("/api/books/{book_id}", status_code=204)
