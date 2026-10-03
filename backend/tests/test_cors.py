@@ -28,6 +28,20 @@ def test_allowed_origin_gets_cross_origin_grant(client):
     assert res.headers.get("access-control-allow-origin") == ALLOWED
 
 
+def test_allowed_origin_can_read_range_headers(client):
+    """原版 PDF 阅读面要跨源分段取字节，这几个头必须交给 JS。
+
+    跨源时浏览器默认只把「安全」的响应头暴露给脚本：少了 `expose_headers`，
+    pdf.js 读不到 `Content-Range` / `Accept-Ranges`，就只能放弃分段、整包下载。
+    26 MB 的教材多下一遍，用户是能感觉到的。
+    """
+    res = client.get("/api/health", headers={"Origin": ALLOWED})
+
+    exposed = res.headers.get("access-control-expose-headers", "").lower()
+    for header in ("content-range", "accept-ranges", "content-length"):
+        assert header in exposed
+
+
 def test_foreign_origin_gets_no_cross_origin_grant(client):
     """别的网站读不到响应：授权头必须缺席，浏览器才会拦住。"""
     res = client.get("/api/books", headers={"Origin": EVIL})

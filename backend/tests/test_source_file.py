@@ -4,6 +4,7 @@
 - 上传成功后原文件落在 data/sources/ 下，Bytes 完全一致（不是重新生成的等价物）；
 - books 上记下来源格式与文件名，书元信息据此暴露 hasSource；
 - GET /api/books/{id}/source 下载到原字节，且带附件的 Content-Disposition；
+- `inline=1` 改为内联展示、并支持 Range 分段取字节（原版 PDF 阅读面用）；
 - 没留存原文件的教材（早于该功能上线导入）返回 404 而不是坏链接；
 - source_name 被改成带目录的路径时，解析结果仍被限制在 sources 目录内。
 """
@@ -45,6 +46,40 @@ def test_download_source_returns_original_bytes(client, app, demo_pdf_bytes):
     assert res.headers["content-type"] == "application/pdf"
     # 附件形式：浏览器下载而不是在标签页里预览
     assert "attachment" in res.headers["content-disposition"]
+
+
+def test_source_inline_serves_same_bytes_without_attachment(client, demo_pdf_bytes):
+    """原版 PDF 阅读面用 `inline=1`：同一份字节，但不要求浏览器下载。"""
+    book = _upload(client, demo_pdf_bytes, "demo.pdf").json()
+
+    res = client.get(f"/api/books/{book['id']}/source?inline=1")
+
+    assert res.status_code == 200
+    assert res.content == demo_pdf_bytes
+    assert "inline" in res.headers["content-disposition"]
+    # 默认（不带 inline）仍然是附件，两条路不能互相影响
+    assert "attachment" in client.get(f"/api/books/{book['id']}/source").headers[
+        "content-disposition"
+    ]
+
+
+def test_source_supports_range_requests(client, demo_pdf_bytes):
+    """Range 分段取字节：pdf.js 按需拉页，26 MB 的教材不必整包下载。
+
+    响应头也要对：`accept-ranges` 让客户端知道可以分段，`content-range` 告诉它
+    这一段在原文件中的位置。星标版本已支持，这里钉住它没有被我们的参数改动破坏。
+    """
+    book = _upload(client, demo_pdf_bytes, "demo.pdf").json()
+
+    res = client.get(
+        f"/api/books/{book['id']}/source?inline=1",
+        headers={"Range": "bytes=0-9"},
+    )
+
+    assert res.status_code == 206
+    assert res.content == demo_pdf_bytes[:10]
+    assert res.headers["accept-ranges"] == "bytes"
+    assert res.headers["content-range"] == f"bytes 0-9/{len(demo_pdf_bytes)}"
 
 
 def test_docx_source_uses_word_media_type(client, demo_docx_bytes):

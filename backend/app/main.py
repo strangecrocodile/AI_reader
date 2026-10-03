@@ -74,6 +74,15 @@ def create_app(
         allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
+        # 原版 PDF 阅读面（pdf.js）靠 Range 分段取字节，它要读响应里的这几个头
+        # 才知道「这份文件能分段取、总长多少」。跨源时浏览器默认不把这几个头交给 JS，
+        # 缺了就只能整包下载——26 MB 的教材多下一遍，用户是能感觉到的。
+        expose_headers=[
+            "Content-Range",
+            "Accept-Ranges",
+            "Content-Length",
+            "Content-Disposition",
+        ],
     )
     app.state.db = db
     app.state.llm = llm

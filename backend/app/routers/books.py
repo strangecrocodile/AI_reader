@@ -147,11 +147,14 @@ async def upload_book(
 
 
 @router.get("/api/books/{book_id}/source")
-def get_book_source(book_id: str, request: Request):
+def get_book_source(book_id: str, request: Request, inline: bool = False):
     """下载教材原始文件（上传时留存的字节流）。
 
     老教材（本次改动之前入库的）没有原文件，返回 404 并说明原因，
     前端据此把「下载原文件」按钮置灰，而不是给一个坏链接。
+
+    `inline=1` 给原版 PDF 阅读面用：pdf.js 靠 Range 分段取字节，且需要浏览器
+    允许内联展示。默认仍是 `attachment`——「下载原文件」按钮的行为不能变。
     """
     db, _, _, settings = _state(request)
     book = db.get_book(book_id)
@@ -166,7 +169,7 @@ def get_book_source(book_id: str, request: Request):
         path,
         media_type=media_type,
         filename=path.name,
-        content_disposition_type="attachment",
+        content_disposition_type="inline" if inline else "attachment",
     )
 
 
