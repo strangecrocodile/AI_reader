@@ -18,7 +18,7 @@ from .config import Settings, settings as default_settings
 from .db import Database
 from .llm.client import CloudLLM, MockLLM
 from .rag.retrieval import RetrievalService
-from .routers import books, ocr
+from .routers import books, ocr, tools
 from .services.demo import seed_demo_if_empty
 from .services.ingest import backfill_content_warnings
 from .services.ocr import OcrTaskService
@@ -100,6 +100,8 @@ def create_app(
 
     app.include_router(books.router)
     app.include_router(ocr.router)
+    # 阅读工具（翻译 / 总结）：与教材生命周期无关的独立路由，见 routers/tools.py
+    app.include_router(tools.router)
     # 教材里抽出的插图：静态目录直接对外提供，前端 <img src="/assets/..."> 即可。
     # 目录可能还不存在（没导入过带图的教材），先建出来，否则 mount 会报错。
     settings.assets_dir.mkdir(parents=True, exist_ok=True)

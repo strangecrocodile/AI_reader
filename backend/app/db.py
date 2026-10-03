@@ -128,6 +128,18 @@ CREATE TABLE IF NOT EXISTS notes (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+-- 阅读工具的产物（当前只有「本章总结」）：按 (书, 章, 工具) 缓存一份。
+-- 挂在 chapters 上并带级联：章节被替换掉时，基于旧段落生成的总结自动作废——
+-- 留着它比没有更糟，它讲的是已经不存在的原文。
+CREATE TABLE IF NOT EXISTS tool_outputs (
+  book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  tool TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (book_id, chapter_id, tool)
+);
 CREATE INDEX IF NOT EXISTS idx_notes_chapter ON notes(book_id, chapter_id);
 CREATE INDEX IF NOT EXISTS idx_notes_anchor ON notes(anchor_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id);
@@ -385,6 +397,7 @@ class Database:
                 "learning_events",
                 "concepts",
                 "chapter_progress",
+                "tool_outputs",
                 "chapters",
                 "sections",
                 "anchors",
@@ -504,7 +517,7 @@ class Database:
                     (a["id"], a["book_id"], a["chapter_id"], a["section_id"], a["text"], a["page"]),
                 )
 
-            for table in ("explanations", "plans", "concepts", "quizzes"):
+            for table in ("explanations", "plans", "concepts", "quizzes", "tool_outputs"):
                 conn.execute(f"DELETE FROM {table} WHERE book_id=?", (book_id,))
         return {
             "chaptersUpdated": len(chapters) - added,
@@ -513,6 +526,46 @@ class Database:
             "threadsDropped": dropped["threads"],
             "notesDropped": dropped["notes"],
         }
+
+    def upsert_tool_output(
+        self,
+        book_id: str,
+        chapter_id: str,
+        tool: str,
+        payload: Dict[str, Any],
+        model: str = "",
+    ) -> None:
+        """缓存一次阅读工具的产物（当前只有本章总结，见 services/tools.py）。"""
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO tool_outputs"
+                "(book_id,chapter_id,tool,payload,model,created_at) VALUES(?,?,?,?,?,?)",
+                (
+                    book_id,
+                    chapter_id,
+                    tool,
+                    json.dumps(payload, ensure_ascii=False),
+                    model or "",
+                    _now(),
+                ),
+            )
+
+    def get_tool_output(self, book_id: str, chapter_id: str, tool: str) -> Optional[Dict[str, Any]]:
+        """读回缓存的工具产物；坏数据当「没有缓存」，绝不让一行脏记录炸掉整个面板。"""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tool_outputs WHERE book_id=? AND chapter_id=? AND tool=?",
+                (book_id, chapter_id, tool),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return {"payload": payload, "model": row["model"], "createdAt": row["created_at"]}
 
     def reanchor(self, note_updates: List[tuple], thread_updates: List[tuple]) -> int:
         """把笔记/线程的锚点改到新解析出来的段落上（按文本重新匹配的结果）。

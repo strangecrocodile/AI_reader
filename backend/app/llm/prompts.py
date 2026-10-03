@@ -84,3 +84,58 @@ PLAN_SYSTEM = """你是「AI讲师」，根据教材章节目录生成学习路�
 def plan_user(chapters: list) -> str:
     lines = "\n".join(f"- {c['id']}：第 {c['num']} 章 {c['title']}（第 {c['page_start']}-{c['page_end']} 页）" for c in chapters)
     return f"教材章节目录：\n{lines}\n\n请输出学习路径 JSON。"
+
+
+LANGUAGE_NAMES = {"zh": "中文", "en": "英文"}
+
+
+TRANSLATE_SYSTEM = """你是教材翻译器。把用户给出的原文逐段译成目标语言。
+规则：
+1. 只翻译，不要解释、不要总结、不要添加原意之外的任何内容；
+2. 保留原文里的公式、符号、编号、专有名词的写法（首次出现的术语可在括号里给出原文）；
+3. 译文要通顺、符合目标语言的教材表达习惯，不要逐字硬译；
+4. 原文如果是表格或列表，保持同样的结构；
+5. 直接输出译文正文，不要输出 JSON，也不要重复原文。"""
+
+
+def translate_user(text: str, target: str, *, context: str = "") -> str:
+    """`context` 只用于帮助理解术语，不要求翻译（例如所在章的标题）。"""
+    where = f"（出自《{context}》）" if context else ""
+    return (
+        f"目标语言：{LANGUAGE_NAMES.get(target, target)}\n"
+        f"原文{where}：\n{text}\n\n"
+        f"请只输出这段原文的{LANGUAGE_NAMES.get(target, target)}译文。"
+    )
+
+
+SUMMARY_SYSTEM = """你是「AI讲师」，为学生总结指定教材内容。
+规则：
+1. 只依据给定的教材段落，不得补充教材之外的事实；
+2. 先一句话讲清这段内容在说什么，再给 3–6 条要点；每条要点要具体（讲清概念、条件或结论），
+   不要写「本节介绍了……」这类空话；
+3. 每条要点末尾用 [编号] 标出它的依据段落，编号只能取自给定的段落编号，禁止编造；
+4. 段落里没有讲到的内容不要写；如果给出的段落太少、看不出结构，就如实说明「这部分内容较少」；
+5. 直接输出正文：第一行是一句话概述，随后每行一条要点（以「- 」开头），不要输出 JSON。"""
+
+
+def summary_user(title: str, blocks: str, *, partial: bool = False) -> str:
+    note = "（这是本章的一部分，不是全部）" if partial else ""
+    return (
+        f"要总结的内容：《{title}》{note}\n"
+        f"教材段落（每行以 [编号] 开头，编号即依据）：\n{blocks}\n\n"
+        "请按系统要求输出概述与要点，并在每条要点末尾用 [编号] 标注依据。"
+    )
+
+
+SUMMARY_MERGE_SYSTEM = """你是「AI讲师」。下面是一条长教材内容**分段总结**的结果，
+请把它们合并成一份全文总结。
+规则：
+1. 去掉重复，保留各部分互不相同的要点；按内容本身的逻辑顺序组织；
+2. 第一行是一句话概述（说明整章在讲什么），随后每行一条要点（以「- 」开头）；
+3. 要点控制在 5–8 条；每条末尾保留原总结里的 [编号] 依据，禁止编造新的编号；
+4. 直接输出正文，不要输出 JSON，也不要说明「这是合并结果」。"""
+
+
+def summary_merge_user(title: str, partials: list) -> str:
+    blocks = "\n\n".join(f"【第 {i} 部分】\n{text}" for i, text in enumerate(partials, start=1))
+    return f"《{title}》的分段总结：\n{blocks}\n\n请合并成一份全文总结。"

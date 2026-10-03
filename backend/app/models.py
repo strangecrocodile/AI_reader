@@ -53,6 +53,27 @@ class ProgressRequest(BaseModel):
     mastery: float = Field(ge=0, le=100)
 
 
+class TranslateRequest(BaseModel):
+    """翻译请求：有 `selectedText` 就译选中的那段，否则译 `page` 这一页的正文段落。"""
+
+    bookId: str
+    chapterId: str
+    selectedText: str = Field(default="", max_length=1000)
+    anchorId: str = ""
+    page: Optional[int] = Field(default=None, ge=1, le=20000)
+    #: 目标语言；留空则自动（中文原文→英文，外文原文→中文）
+    target: Optional[Literal["zh", "en"]] = None
+
+
+class SummaryRequest(BaseModel):
+    """总结请求：有 `selectedText` 就总结那段，否则总结整章。"""
+
+    bookId: str
+    chapterId: str
+    selectedText: str = Field(default="", max_length=1000)
+    anchorId: str = ""
+
+
 class EventRequest(BaseModel):
     """一次学习事件上报；掌握度由后端按事件重算，前端不再自己编数字。"""
 
