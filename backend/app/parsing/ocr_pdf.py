@@ -211,6 +211,7 @@ def _assemble_ocr_book(
     blocks: List[Block],
     para_pages: List[int],
     notes: List[str],
+    page_offset: int = 0,
 ) -> ParsedBook:
     """把「章 → 段落」装配成 ParsedBook，**页码用 OCR 时的真实页号**。
 
@@ -219,8 +220,17 @@ def _assemble_ocr_book(
     会让溯源里的「教材依据 · 第 N 页」对不上书，正是本功能要避免的。
 
     所以这里刻意重复一小段编号逻辑，换取真实页码；代价是约 25 行。
+
+    `page_offset` 要落进库里：原版 PDF 阅读面按 **PDF 页序**翻页，而这里的页码是
+    原书印刷页码，两者差一个偏移（扫描件几乎都有前言页，实测差 10 页）。不记下来
+    就只能按印刷页码翻，读者会被甩到别的一页上。
     """
-    book = ParsedBook(title=(title or "").strip() or "未命名教材", chapters=[], notes=list(notes))
+    book = ParsedBook(
+        title=(title or "").strip() or "未命名教材",
+        chapters=[],
+        notes=list(notes),
+        page_offset=int(page_offset or 0),
+    )
     pages = iter(para_pages)
     for block in blocks:
         chapter = ParsedChapter(
@@ -336,6 +346,6 @@ def ocr_pdf_bytes(
                 "本教材由扫描件识别而来，公式、图表与页眉页脚可能存在误差；"
                 "未能读到原书页码，这里的页码是 PDF 页序，可能与纸质书印刷页码不一致"
             )
-        return _assemble_ocr_book(title, blocks, para_pages, notes)
+        return _assemble_ocr_book(title, blocks, para_pages, notes, page_shift)
     finally:
         doc.close()

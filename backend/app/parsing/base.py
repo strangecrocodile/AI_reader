@@ -162,6 +162,9 @@ class ParsedBook:
     #: 解析受限说明（跳过了什么、章节是靠什么推断的）。前端据此提示用户
     #: 「内容可能没被完整读取」，而不是让人对着一本空教材猜原因。
     notes: List[str] = field(default_factory=list)
+    #: 印刷页码 − PDF 页序。扫描件的页码取自原书页脚，而原版 PDF 阅读面按 PDF 页序
+    #: 翻页，所以要减掉它才能跳到对的那一页。其它格式没有这层换算，恒为 0。
+    page_offset: int = 0
 
 
 @dataclass

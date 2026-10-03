@@ -182,6 +182,9 @@ class Database:
         # 段落的行内版式 / 插图 / 表格结构（JSON）。空串表示「没有额外版式」，
         # 渲染层把 text 当成单个纯文本片段——升级前入库的老数据因此无需迁移。
         ("sections", "content", "TEXT DEFAULT ''"),
+        # 印刷页码 − PDF 页序：扫描件的页码取自原书页脚，而原版 PDF 阅读面按 PDF
+        # 页序翻页，减掉这个偏移才跳得对（见 parsing/ocr_pdf.py）。其它格式恒为 0。
+        ("books", "page_offset", "INTEGER DEFAULT 0"),
     )
 
     def init(self) -> None:
@@ -303,7 +306,7 @@ class Database:
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO books(id,title,author,note,progress_pct,content_warning,"
-                "source_format,source_name,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                "source_format,source_name,page_offset,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     book["id"],
                     book["title"],
@@ -313,6 +316,7 @@ class Database:
                     book.get("content_warning", ""),
                     book.get("source_format", ""),
                     book.get("source_name", ""),
+                    int(book.get("page_offset", 0) or 0),
                     book.get("created_at", ""),
                 ),
             )

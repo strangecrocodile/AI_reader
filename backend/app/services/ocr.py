@@ -27,7 +27,12 @@ from ..db import Database
 from ..parsing.ocr_engine import OcrEngine, RapidOcrEngine
 from ..parsing.ocr_pdf import ocr_pdf_bytes
 from ..parsing.pdf import probe_pdf
-from .ingest import OCR_SOURCE_NOTE, SCANNED_NO_OCR_MESSAGE, store_parsed_book
+from .ingest import (
+    OCR_SOURCE_NOTE,
+    SCANNED_NO_OCR_MESSAGE,
+    save_source_file,
+    store_parsed_book,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +201,16 @@ class OcrTaskService:
             logger.exception("OCR 任务 %s 失败", task_id)
             self._fail(task_id, state["done"], state["total"], str(e))
             return
+
+        # 原文件也留一份：扫描件本来最需要「原版长什么样」——识别出来的是重构文字，
+        # 公式与版式都在原图里。以前 OCR 路径不落盘，于是扫描件既没有「下载原文件」，
+        # 也没法用原版 PDF 阅读面打开。
+        try:
+            save_source_file(self.db, self.settings, info["id"], data, "pdf")
+        except OSError as exc:
+            # 已经在库里的书是好的，别因为一次落盘失败把它标成「识别失败」：
+            # 用户重传一次要再花几十分钟。缺的只是「下载原文件」而已。
+            logger.warning("扫描件原文件落盘失败，已跳过：%s（%s）", info["id"], exc)
 
         if self.retrieval is not None:
             try:

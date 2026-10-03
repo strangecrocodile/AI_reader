@@ -168,6 +168,9 @@ def store_parsed_book(
         "note": f"来源格式：{note}",
         "progress_pct": 0.0,
         "content_warning": content_warning_of(parsed, extra_notes=extra_notes),
+        # 扫描件的「印刷页码 − PDF 页序」。原版 PDF 阅读面按 PDF 页序翻页，
+        # 减掉它才跳得对；其它解析器没有这层换算，默认 0。
+        "page_offset": int(getattr(parsed, "page_offset", 0) or 0),
         "created_at": _now(),
     }
 
@@ -271,15 +274,35 @@ def ingest_file_bytes(
 
     source_name = ""
     if settings is not None:
-        sources_dir = Path(settings.sources_dir)
-        sources_dir.mkdir(parents=True, exist_ok=True)
-        source_name = f"{info['id']}.{fmt}"
-        (sources_dir / source_name).write_bytes(file_bytes)
-        db.set_book_source(info["id"], fmt, source_name)
+        source_name = save_source_file(db, settings, info["id"], file_bytes, fmt)
         info["sourceName"] = source_name
 
     info["sourceBytes"] = len(file_bytes)
     return info
+
+
+def save_source_file(
+    db: Database,
+    settings,
+    book_id: str,
+    file_bytes: bytes,
+    fmt: str,
+) -> str:
+    """把原文件字节落到 `data/sources/{book_id}.{fmt}` 并记进 books，返回文件名。
+
+    单独抽出来是因为**有两条入库路径**：常规上传（`ingest_file_bytes`）与扫描件
+    OCR（`services/ocr.py`）。OCR 那条以前不落盘，于是扫描件既没有「下载原文件」，
+    也无法用原版 PDF 阅读面打开——识别了几十分钟的结果只剩一份重构出来的文字，
+    这跟「保留原书的观感」是拧着的。两条路径共用这一份实现，命名与记录口径才不会分叉。
+
+    调用方负责决定「落盘失败要不要算失败」：这里的 OSError 会原样抛出。
+    """
+    sources_dir = Path(settings.sources_dir)
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    source_name = f"{book_id}.{fmt}"
+    (sources_dir / source_name).write_bytes(file_bytes)
+    db.set_book_source(book_id, fmt, source_name)
+    return source_name
 
 
 def source_path_of(db: Database, book: Dict[str, Any], settings) -> Optional[Path]:

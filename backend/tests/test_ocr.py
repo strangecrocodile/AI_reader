@@ -163,6 +163,15 @@ def test_ocr_splits_chapters_and_keeps_printed_page_numbers(four_page_book):
     assert pages[0] == 1 + PRINTED_OFFSET and pages[-1] == 4 + PRINTED_OFFSET
 
 
+def test_ocr_reports_printed_page_offset(four_page_book):
+    """偏移量要跟着 ParsedBook 走，它决定了原版 PDF 阅读面翻到第几页。
+
+    阅读面按 **PDF 页序**翻页，而这里存下来的页面是**印刷页码**；少了这个偏移，
+    点「第 9 页的依据」会翻到 PDF 第 9 页，而书上的第 9 页印在第 17 页上。
+    """
+    assert four_page_book.page_offset == PRINTED_OFFSET
+
+
 def test_ocr_maps_each_paragraph_to_its_own_printed_page(four_page_book):
     """页码保真的回归防线：溯源里的「教材依据 · 第 N 页」要能照着翻到纸上。"""
     sections = {s.text: s for c in four_page_book.chapters for s in c.sections}
@@ -206,6 +215,8 @@ def test_ocr_does_not_claim_page_fidelity_without_page_numbers():
     assert "与纸质书印刷页码一致" not in note
     # 页码退回 PDF 页序
     assert min(s.page for c in book.chapters for s in c.sections) == 1
+    # 没有偏移可记：阅读面按 PDF 页序翻页，正好就是这里存下来的页码
+    assert book.page_offset == 0
 
 
 def test_ocr_drops_watermark_lines_repeated_on_every_page():
@@ -328,13 +339,22 @@ def build_service(tmp_path, engine, **kwargs):
 
     db = Database(tmp_path / "ocr.db")
     db.init()
-    return db, OcrTaskService(db, _StubSettings(), engine_factory=lambda: engine, runner=lambda job: job(), **kwargs)
+    return db, OcrTaskService(
+        db, _StubSettings(tmp_path), engine_factory=lambda: engine, runner=lambda job: job(), **kwargs
+    )
 
 
 class _StubSettings:
     ocr_configured = True
     ocr_dpi = DPI
     ocr_threads = 4
+
+    def __init__(self, data_dir):
+        # 真实的 Settings 由 data_dir 派生出 sources_dir：OCR 入库后要把原文件
+        # 落在这里（见 services/ocr.py），桩少了这一项就会漏测那条路。
+        from pathlib import Path
+
+        self.sources_dir = Path(data_dir) / "sources"
 
 
 def test_submit_rejects_text_pdf(tmp_path, demo_pdf_bytes):
@@ -366,6 +386,40 @@ def test_success_path_stores_book_and_reports_progress(tmp_path):
     assert "与纸质书印刷页码一致" in book["content_warning"]
     assert db.chapters_of(task["bookId"])
     assert service.get(task["id"])["status"] == DONE
+
+
+def test_success_path_keeps_the_scanned_original(tmp_path):
+    """扫描件也要留存原文件：原版阅读面与「下载原文件」都靠它。
+
+    识别出来的是重构文字，公式与版式只在原图里；不留原文件的话，扫描件这本书
+    就只剩一份「味道不对」的纯文本，识别几十分钟的结果也用不上原版视图。
+    """
+    data = make_pdf(4)
+    db, service = build_service(tmp_path, FakeOcrEngine(FOUR_PAGES))
+    task = service.submit(data, "扫描教材.pdf", "扫描教材")
+
+    book = db.get_book(task["bookId"])
+    assert book["source_format"] == "pdf"
+    stored = tmp_path / "sources" / book["source_name"]
+    assert stored.is_file()
+    # 留的必须是与上传完全一致的字节，而不是重新生成的等价物
+    assert stored.read_bytes() == data
+
+
+def test_source_write_failure_does_not_fail_a_stored_book(tmp_path, monkeypatch):
+    """落盘失败不该把一本已经识别好的书标成「失败」——重传一次是几十分钟。"""
+    import app.services.ocr as ocr_module
+
+    def explode(*_args, **_kwargs):
+        raise OSError("模拟磁盘写满")
+
+    monkeypatch.setattr(ocr_module, "save_source_file", explode)
+
+    db, service = build_service(tmp_path, FakeOcrEngine(FOUR_PAGES))
+    task = service.submit(make_pdf(4), "扫描教材.pdf", "扫描教材")
+
+    assert task["status"] == DONE
+    assert db.get_book(task["bookId"])["source_name"] == ""
 
 
 def test_failure_path_writes_nothing(tmp_path):
@@ -493,6 +547,15 @@ def test_upload_scanned_pdf_returns_202_then_task_completes(tmp_path):
     meta = client.get(f"/api/books/{task['bookId']}").json()
     assert meta["title"] == "扫描教材"  # 扫描件元数据没标题时用文件名兜底
     assert "扫描件" in meta["note"]
+    # 偏移量一路走到接口：阅读面据此把印刷页码换算成 PDF 页序（见 utils/anchorPage.js）
+    assert meta["pageOffset"] == PRINTED_OFFSET
+
+    content = client.get(
+        f"/api/books/{task['bookId']}/chapters/{meta['chapters'][0]['id']}"
+    ).json()
+    assert content["pageOffset"] == PRINTED_OFFSET
+    assert content["hasSource"] is True
+    assert content["sourceFormat"] == "pdf"
 
 
 def test_ask_cites_the_printed_page_of_a_scanned_book(tmp_path):
