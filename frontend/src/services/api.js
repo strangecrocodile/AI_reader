@@ -165,11 +165,16 @@ export const api = {
    *
    * 只给 URL 而不代下载：让浏览器用自己的下载能力（进度、断点、另存为），
    * 也避免把整本书读进内存。
+   *
+   * `inline: true` 给原版 PDF 阅读面用：同一份字节，但不带 `attachment`——
+   * pdf.js 是 fetch 取字节、不受它影响，这是给「在浏览器里直接看」留的口子，
+   * 也让响应语义与实际用途一致（`?inline=1` 见后端 routers/books.py）。
    */
-  sourceUrl(book) {
+  sourceUrl(book, { inline = false } = {}) {
     if (!book?.hasSource) return '';
     if (!useBackend()) return ''; // 演示模式没有真实原文件
-    return `${apiBase}/api/books/${book.id}/source`;
+    const suffix = inline ? '?inline=1' : '';
+    return `${apiBase}/api/books/${book.id}/source${suffix}`;
   },
 
   /**

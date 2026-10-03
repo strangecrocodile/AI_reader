@@ -38,6 +38,10 @@ Thumbs.db
 .temp/
 *.tsbuildinfo
 .npm-cache/
+# pdf.js 的运行时资源（CMap / 字体 / wasm）由 `npm install` 的 postinstall 从
+# node_modules 拷进来（见 frontend/scripts/copy-pdfjs-assets.mjs）：它们是第三方
+# 二进制，3.4 MB，不该进仓库；缺了它们中文 PDF 的文字层会空。
+frontend/public/pdfjs/
 
 # ---- Python ----
 __pycache__/

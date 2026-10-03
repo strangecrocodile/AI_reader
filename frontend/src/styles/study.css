@@ -13,6 +13,56 @@
   grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
 }
 
+/* 左栏外框：承担滚动，阅读面（原版 PDF / 结构化）与阅读面切换按钮都在里面。
+   从前 .reader 直接当网格项，现在多一层——`.reader` 的 overflow:auto 必须有一个
+   有界高度的父元素才成立，否则内容会被 .study 的 overflow:hidden 直接裁掉。 */
+.reader-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.reader-column > .reader {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 阅读面切换：钉在左栏顶部，不跟着原文滚走 */
+.surface-switch {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  gap: 4px;
+  padding: 8px clamp(18px, 4vw, 64px) 0;
+  background: linear-gradient(180deg, #fbfbfd 70%, rgba(251, 251, 253, 0));
+}
+
+.surface-switch button {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 13px;
+  cursor: pointer;
+}
+
+.surface-switch button.active {
+  border-color: rgba(0, 102, 204, 0.45);
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--ink);
+}
+
+.surface-switch button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ---------- 左栏：教材原文 ---------- */
 .reader {
   background:
@@ -1261,6 +1311,12 @@
 
   .reader {
     min-height: 70vh;
+    overflow: visible;
+  }
+
+  /* 窄屏下整页滚动，左栏不再自己滚（与 .reader 的 overflow:visible 一致） */
+  .reader-column {
+    height: auto;
     overflow: visible;
   }
 

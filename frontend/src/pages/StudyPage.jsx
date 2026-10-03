@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Reader, { PAGE_MODE, SCROLL_MODE } from '../components/Reader.jsx';
 import CoachPanel from '../components/CoachPanel.jsx';
@@ -9,8 +9,26 @@ import { truncate } from '../utils/text.js';
 import { useBooks } from '../state/BookContext.jsx';
 import { useToast } from '../state/ToastContext.jsx';
 
+// 懒加载：pdf.js 本体约 440 kB，只有真的打开「原版」阅读面时才值得下载。
+// 演示数据、Word/文本教材、以及只想看结构化视图的用户都不该为它买单。
+const PdfReader = lazy(() => import('../components/PdfReader.jsx'));
+
 /** 阅读方式记在本地：换章、重开页面都保持用户选的那一种。 */
 const VIEW_MODE_KEY = 'ai_reader.viewMode';
+
+/** 阅读面（原版 PDF / 结构化）也记在本地；没记过时按来源自动选（见 surfaceOf）。 */
+const SURFACE_KEY = 'ai_reader.surface';
+const SURFACE_PDF = 'pdf';
+const SURFACE_TEXT = 'text';
+
+function readSurface() {
+  try {
+    const value = localStorage.getItem(SURFACE_KEY);
+    return value === SURFACE_PDF || value === SURFACE_TEXT ? value : null;
+  } catch {
+    return null; // 隐私模式下 localStorage 可能不可用
+  }
+}
 
 function readViewMode() {
   try {
@@ -47,6 +65,9 @@ export default function StudyPage() {
   const { books } = useBooks();
   const chapters = books?.find((item) => item.id === bookId)?.chapters ?? [];
   const [viewMode, setViewMode] = useState(readViewMode);
+  const [surfacePref, setSurfacePref] = useState(readSurface);
+  const [pdfError, setPdfError] = useState('');
+  const book = books?.find((item) => item.id === bookId) ?? null;
 
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -487,6 +508,30 @@ export default function StudyPage() {
     }
   }, []);
 
+  /**
+   * 原版 PDF 阅读面加载失败（文件没了 / 加密 / 不是 PDF）。
+   *
+   * 回退到结构化视图**并且说出来**：静默换一个视图，用户会以为原版就长这样，
+   * 而那正好是我们要修的那个问题。失败信息也一并带上去抬头。
+   */
+  const handlePdfError = useCallback(
+    (message) => {
+      setPdfError(message || '未知原因');
+      toast(`原版 PDF 打不开（${message || '未知原因'}），已切回结构化视图`);
+    },
+    [toast],
+  );
+
+  const handleSurfaceChange = useCallback((surface) => {
+    setSurfacePref(surface);
+    setPdfError('');
+    try {
+      localStorage.setItem(SURFACE_KEY, surface);
+    } catch {
+      // 同上：记不住不影响阅读
+    }
+  }, []);
+
   if (loading) {
     return (
       <section className="page study" aria-busy="true">
@@ -526,24 +571,98 @@ export default function StudyPage() {
     );
   }
 
+  // ---------- 阅读面 ----------
+
+  /**
+   * 这一章用哪个阅读面。
+   *
+   * 默认给原版：教材的观感就是它的内容——矢量插图、公式排版、真实页码都在原文件里，
+   * 结构化视图是重排后的近似物。只有两种情况退回结构化：没有留存原文件（早于该
+   * 功能上线导入的老教材、Word/纯文本来源），或者原版打不开。
+   */
+  const canUsePdf = Boolean(content.hasSource && (content.sourceFormat || '') === 'pdf');
+  const surface = (() => {
+    if (!canUsePdf || pdfError) return SURFACE_TEXT;
+    if (surfacePref === SURFACE_TEXT || surfacePref === SURFACE_PDF) return surfacePref;
+    return SURFACE_PDF;
+  })();
+  const pdfSourceUrl = canUsePdf ? api.sourceUrl(book ?? { id: bookId, hasSource: true }, { inline: true }) : '';
+  // 演示模式（无后端）没有真实文件，`sourceUrl` 会给空串——此时原版面无从谈起
+  const showPdf = surface === SURFACE_PDF && Boolean(pdfSourceUrl);
+
   return (
     <section className="page study">
       <div className="mobile-warning">窄屏下先阅读教材原文，AI 讲解与提问区在原文下方。</div>
       <div className="study-layout">
-        <Reader
-          content={content}
-          bookId={bookId}
-          focusId={focusId}
-          onSelect={handleSelect}
-          onRead={handleRead}
-          chapters={chapters}
-          currentChapterId={chapterId}
-          onSelectChapter={handleSelectChapter}
-          onOpenSource={handleOpenSource}
-          notedAnchorIds={notedAnchorIds}
-          viewMode={viewMode}
-          onViewModeChange={handleViewModeChange}
-        />
+        <div className="reader-column">
+          <div className="surface-switch" role="group" aria-label="阅读面">
+            <button
+              type="button"
+              className={showPdf ? 'active' : ''}
+              aria-pressed={showPdf}
+              onClick={() => handleSurfaceChange(SURFACE_PDF)}
+              disabled={!canUsePdf}
+              title={canUsePdf ? '原书的版式、公式与插图' : '这本教材没有留存原文件，重新上传后可用'}
+            >
+              原版
+            </button>
+            <button
+              type="button"
+              className={showPdf ? '' : 'active'}
+              aria-pressed={!showPdf}
+              onClick={() => handleSurfaceChange(SURFACE_TEXT)}
+            >
+              结构化
+            </button>
+          </div>
+          {pdfError ? (
+            <p className="pdf-note">
+              原版 PDF 打不开（{pdfError}），已切回结构化视图。下面这份原文是解析出来的文本。
+            </p>
+          ) : null}
+          {!canUsePdf && !pdfError ? (
+            <p className="pdf-note">
+              {content.hasSource === false
+                ? '这本教材没有留存原文件（早于该功能上线时导入），所以只有结构化视图；重新上传一次即可看到原版页面。'
+                : '这个来源格式没有原版页面可看（只有 PDF 有），用的是解析出来的结构化视图。'}
+            </p>
+          ) : null}
+          {showPdf ? (
+            <Suspense fallback={<p className="loading-note">正在打开原版页面…</p>}>
+              <PdfReader
+                book={book ?? { id: bookId }}
+                sourceUrl={pdfSourceUrl}
+                content={content}
+                focusId={focusId}
+                onSelect={handleSelect}
+                onRead={handleRead}
+                onError={handlePdfError}
+                chapters={chapters}
+                currentChapterId={chapterId}
+                onSelectChapter={handleSelectChapter}
+                onOpenSource={handleOpenSource}
+                notedAnchorIds={notedAnchorIds}
+                viewMode={viewMode}
+                onViewModeChange={handleViewModeChange}
+              />
+            </Suspense>
+          ) : (
+            <Reader
+              content={content}
+              bookId={bookId}
+              focusId={focusId}
+              onSelect={handleSelect}
+              onRead={handleRead}
+              chapters={chapters}
+              currentChapterId={chapterId}
+              onSelectChapter={handleSelectChapter}
+              onOpenSource={handleOpenSource}
+              notedAnchorIds={notedAnchorIds}
+              viewMode={viewMode}
+              onViewModeChange={handleViewModeChange}
+            />
+          )}
+        </div>
         <CoachPanel
           content={content}
           thread={activeThread}

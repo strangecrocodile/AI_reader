@@ -1,0 +1,187 @@
+/* ---------- 原版 PDF 阅读面 ---------- */
+
+/* 纸张：一页原书页面 + 它的文字层。
+   页面本体是 canvas（保真），文字层是覆盖在上面的透明 span（可选中、可高亮）。 */
+.pdf-page {
+  position: relative;
+  margin: 0 auto 22px;
+  background: #fff;
+  border: 1px solid rgba(29, 29, 31, 0.08);
+  border-radius: 4px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  /* 文字层要用它算字号与行高（pdf.js 的 span 内联样式只给 --font-height /
+     --scale-x / --rotate，绝对尺寸由这个变量乘出来）。不设就是 0 号字。 */
+  --total-scale-factor: 1;
+}
+
+.pdf-page canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* 页面渲染失败（画不出来 / 文件损坏）：如实说一句，别留一张空白纸 */
+.pdf-page-error {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* 定位到锚点时的临时高亮：只上底色，不动文字尺寸（动尺寸会让文字层错位） */
+.pdf-hit {
+  background: rgba(255, 214, 10, 0.42);
+  border-radius: 2px;
+}
+
+/* ---------- 文字层 ----------
+   从 pdfjs-dist@6.3.289 的 web/pdf_viewer.css 摘出 `.textLayer` 相关规则
+   （原文用 CSS 嵌套写，这里展开成等价写法）。**升级 pdfjs-dist 时要回来对一次**：
+   这些 span 的位置/字号全靠那几个自定义属性传进来，规则对不上会整体错位。 */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  text-align: initial;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer ::selection {
+  background: rgba(0 0 255 / 0.25);
+  background: color-mix(in srgb, AccentColor, transparent 50%);
+  color: transparent;
+}
+
+/* ---------- 工具栏 ---------- */
+.pdf-bar {
+  position: sticky;
+  top: 62px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  max-width: 820px;
+  margin: 18px auto 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(251, 251, 253, 0.86);
+  backdrop-filter: saturate(180%) blur(18px);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pdf-bar button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 700;
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.pdf-bar button:hover:not(:disabled) {
+  border-color: rgba(0, 102, 204, 0.4);
+}
+
+.pdf-bar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pdf-bar .pdf-page-input {
+  width: 62px;
+  min-height: 34px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.pdf-bar .pdf-spacer {
+  flex: 1;
+}
+
+.pdf-bar .pdf-zoom {
+  min-width: 52px;
+  text-align: center;
+  font: 12px var(--font-mono);
+}
+
+/* 扫描件的文字层来自 OCR，不在原 PDF 里：页面上没有可选文字，如实提示用户 */
+.pdf-note {
+  max-width: 820px;
+  margin: 0 auto 14px;
+  padding: 10px 14px;
+  border-left: 3px solid rgba(0, 102, 204, 0.5);
+  border-radius: 8px;
+  background: rgba(0, 102, 204, 0.06);
+  color: #3a3a3c;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 本页有笔记的记号。不画在原文上：文字层是拼出来的，位置不可靠，
+   画错位置比不画更糟——所以只在页角点一个数，精确位置留给右栏的笔记列表。 */
+.pdf-note-mark {
+  position: absolute;
+  left: 0;
+  top: 34px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 0 10px 10px 0;
+  background: rgba(255, 159, 10, 0.92);
+  color: #fff;
+  font: 700 11px/1 var(--font-mono);
+}
+
+/* 单页模式下只显示当前页 */
+.pdf-single .pdf-page {
+  display: none;
+}
+
+.pdf-single .pdf-page.current {
+  display: block;
+}
