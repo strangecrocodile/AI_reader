@@ -815,6 +815,52 @@ def test_anchors_keep_paragraph_order_in_long_chapter(client, app):
     assert [a["text"] for a in anchors] == paragraphs
 
 
+def test_chapter_content_exposes_page_numbers_for_pdf_view(client, demo_pdf_bytes):
+    """段落级页码 + 来源信息：原版 PDF 阅读面的地基。
+
+    前端靠「PDF 页 ↔ 锚点」这层对应把划词回填到锚点、把依据回跳到正确的那一页、
+    按页上报已读；这里钉住：每段都有页码、页码落在本章页范围内、来源信息与
+    章节内容一起下发（直接打开章节链接时不必等书架列表加载完）。
+    """
+    book = _upload(client, demo_pdf_bytes)
+    chapter = book["chapters"][0]
+    content = client.get(f"/api/books/{book['id']}/chapters/{chapter['id']}").json()
+
+    assert content["sourceFormat"] == "pdf"
+    assert content["hasSource"] is True
+    assert content["pageOffset"] == 0
+    assert content["pageEnd"] >= content["page"]
+
+    pages = [p["page"] for p in content["paragraphs"]]
+    assert pages, "示例教材应解析出原文段落"
+    assert all(content["page"] <= page <= content["pageEnd"] for page in pages)
+    # 扉页/目录与末尾空白会让首尾段落不等于章节首末页，所以只做范围约束
+    assert min(pages) >= content["page"]
+    assert max(pages) <= content["pageEnd"]
+
+
+def test_paragraph_pages_grow_with_reading_order(client):
+    """虚拟页码（Word / 纯文本按 1200 字折一页）必须随阅读顺序单调不减。
+
+    前端把「页 → 段落」当成有序表来查最近命中；页码一旦乱序，划词回填锚点会
+    挑到别的页上去。
+    """
+    paragraphs = [f"第{i}段：" + "这是一段用于计算虚拟页码的教材正文。" * 4 for i in range(1, 61)]
+    raw = ("第1章 长章节\n" + "\n".join(paragraphs) + "\n").encode("utf-8")
+    resp = client.post("/api/books", files={"file": ("长章节.txt", raw, "text/plain")})
+    assert resp.status_code == 201, resp.text
+    book = resp.json()
+
+    content = client.get(f"/api/books/{book['id']}/chapters/{book['chapters'][0]['id']}").json()
+    pages = [p["page"] for p in content["paragraphs"]]
+
+    assert len(pages) == len(paragraphs)
+    assert pages == sorted(pages), "页码必须随阅读顺序单调不减"
+    assert len(set(pages)) >= 3, "五千字应折出多页，否则分页映射退化"
+    assert content["page"] == min(pages)
+    assert content["pageEnd"] == max(pages)
+
+
 def test_fallback_answer_stays_grounded_in_textbook(client):
     """无模型时的兜底答案必须是教材原文摘录，而不是与教材无关的通用讲解。
 

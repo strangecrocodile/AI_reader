@@ -36,6 +36,10 @@ def book_meta(db: Database, llm, book: Dict) -> Dict[str, Any]:
         # 前端据此把「下载原文件」置灰，而不是给一个必然 404 的链接。
         "hasSource": bool((book.get("source_name") or "").strip()),
         "sourceFormat": book.get("source_format", "") or "",
+        # 印刷页码 − PDF 页序。扫描件的页码取自原书页脚，而原版 PDF 阅读面按
+        # **PDF 页序**翻页，所以要减掉这个偏移才能跳到对的那一页（见 parsing/ocr_pdf.py）。
+        # 文本型 PDF 与 Word/纯文本没有这层换算，恒为 0。
+        "pageOffset": int(book.get("page_offset", 0) or 0),
         "progressText": f"{pct}% 已完成",
         "tag": book["title"][:8],
         # 封面：书名用真书名，规格行用来源格式与已识别章节数，页脚用作者/来源。
@@ -97,13 +101,18 @@ def chapter_content(db: Database, llm, book: Dict, chapter: Dict) -> Dict[str, A
         if s["kind"] == "heading":
             continue
         if s["kind"] == "formula":
-            paragraphs.append({"type": "formula", "parts": [s["text"]]})
+            para = {"type": "formula", "parts": [s["text"]]}
         elif s["kind"] == "image":
-            paragraphs.append(_image_paragraph(s))
+            para = _image_paragraph(s)
         elif s["kind"] == "table":
-            paragraphs.append(_table_paragraph(s))
+            para = _table_paragraph(s)
         else:
-            paragraphs.append({"type": "p", "segs": _segs_of(s)})
+            para = {"type": "p", "segs": _segs_of(s)}
+        # 段落级页码：原版 PDF 阅读面靠它把「PDF 页 ↔ 锚点」对上——划词回填锚点、
+        # 依据回跳、按页上报已读都建立在它上面（见前端 utils/anchorPage.js）。
+        # 缺页码的脏数据回退到本章起始页，而不是 0：0 会把用户甩到整本书第一页。
+        para["page"] = int(s.get("page") or chapter["page_start"] or 0)
+        paragraphs.append(para)
 
     points = []
     for kp in explanation.get("points", []):
@@ -132,8 +141,15 @@ def chapter_content(db: Database, llm, book: Dict, chapter: Dict) -> Dict[str, A
         "bookId": book["id"],
         "chapterId": chapter["id"],
         "page": chapter["page_start"],
+        # 章末页：原版阅读面据此知道这一章覆盖 PDF 的哪一段（第 2 章 = 第 16–91 页）。
+        "pageEnd": chapter["page_end"],
         "heading": chapter["title"],
         "intro": _chapter_intro(chapter),
+        # 阅读面选择所需的来源信息跟着章节内容一起下发：阅读器因此不必依赖
+        # 书架列表是否已经加载完（直接打开一个章节链接时也一样能判断）。
+        "sourceFormat": book.get("source_format", "") or "",
+        "hasSource": bool((book.get("source_name") or "").strip()),
+        "pageOffset": int(book.get("page_offset", 0) or 0),
         "paragraphs": paragraphs,
         "knowledgePoints": points,
         "outline": outline,
