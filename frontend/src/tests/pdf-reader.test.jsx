@@ -55,7 +55,8 @@ function fakeDoc() {
 let loadRejects = null;
 const destroySpy = vi.fn();
 
-vi.mock('pdfjs-dist', () => ({
+// 走的是 legacy 构建（老浏览器兼容，理由见 utils/pdfAssets.js）
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   GlobalWorkerOptions: {},
   getDocument: () => {
     const task = {
@@ -69,7 +70,9 @@ vi.mock('pdfjs-dist', () => ({
   TextLayer: FakeTextLayer,
 }));
 
-vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '/pdfjs/pdf.worker.min.mjs' }));
+vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({
+  default: '/pdfjs/pdf.worker.min.mjs',
+}));
 
 const { default: PdfReader } = await import('../components/PdfReader.jsx');
 const { pageAnchorsOf } = await import('../utils/anchorPage.js');

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist';
+// legacy 构建：6.x 用了 `Map.prototype.getOrInsertComputed`，老浏览器上直接打不开
+// （连 worker 里也用了，主线程 polyfill 治不了根）。理由详见 utils/pdfAssets.js。
+import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import {
   matchAnchorForSelection,
@@ -527,7 +529,7 @@ function PdfPage({
       ref={holderRef}
       className={`pdf-page${active ? ' current' : ''}`}
       data-page={page}
-      style={{ width: `${width}px`, maxWidth: '100%', '--total-scale-factor': scale }}
+      style={{ width: `${width}px`, maxWidth: '100%', '--scale-factor': scale }}
     >
       {noteCount ? (
         <span className="pdf-note-mark" title={`本页有 ${noteCount} 条笔记`}>

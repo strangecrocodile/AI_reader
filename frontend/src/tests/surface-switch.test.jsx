@@ -55,7 +55,7 @@ class FakeTextLayer {
   cancel() {}
 }
 
-vi.mock('pdfjs-dist', () => ({
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   GlobalWorkerOptions: {},
   getDocument: () => ({
     promise: Promise.resolve({
@@ -76,7 +76,9 @@ vi.mock('pdfjs-dist', () => ({
   TextLayer: FakeTextLayer,
 }));
 
-vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '/pdfjs/pdf.worker.min.mjs' }));
+vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({
+  default: '/pdfjs/pdf.worker.min.mjs',
+}));
 
 const { default: App } = await import('../App.jsx');
 const { BookProvider } = await import('../state/BookContext.jsx');

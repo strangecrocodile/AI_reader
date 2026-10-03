@@ -280,6 +280,11 @@ pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测�
 「结构化」视图，那里是 OCR 识别出来的文本，划词、记笔记、溯源跳转都在那儿用。
 识别与问答本身不受影响。
 
+**原版 PDF 打不开，提示某个方法 “is not a function”？**
+这是 pdf.js 与浏览器版本不匹配：它调用了你浏览器还没有的引擎 API。**现在的版本不会这样**
+（锁在自带 polyfill 的 4.x legacy 构建）；如果换过 pdf.js 版本后出现，把版本退回 4.x，
+或先在目标浏览器上实测一次。判断依据见 `frontend/src/tests/pdfjs-compat.test.js`。
+
 **「替换」和「删除」有什么区别？**
 「替换」用新文件重新解析**内容**，学习进度、追问线程、笔记与掌握度**全部保留**（引用原文
 的锚点会重新挂接，挂不上的会保留正文并标注）；「删除」则连同章节、讲解、进度、线程、笔记
@@ -388,11 +393,15 @@ cd backend
   同一份内容也会在空书架启动时由 `backend/app/services/demo.py` 自动导入）、
   `tools/kb-agent/data/source/sample_book.docx`（来自 `tools/kb-agent/scripts/make_sample_book.py`）。
 - 接入真实教材时，须使用具有合法使用权的 PDF / Word 文档。
-- 前端用 [pdf.js](https://mozilla.github.io/pdf.js/)（`pdfjs-dist` 6.3.289，Apache-2.0）渲染原版
-  PDF 页面；它的 CMap / 标准字体 / wasm 资源由 `npm install` 从 `node_modules` 拷到
-  `frontend/public/pdfjs/`（不提交进仓库、不访问 CDN，离线可用）。
-  包体实测：主包 312 kB（gzip 101 kB，与加它之前基本持平），pdf.js 与原版面是**懒加载**的
-  独立 chunk 441 kB（gzip 133 kB）+ worker 1.3 MB，只有真的打开「原版」阅读面才下载。
+- 前端用 [pdf.js](https://mozilla.github.io/pdf.js/)（`pdfjs-dist` **4.10.38**，Apache-2.0）渲染原版
+  PDF 页面。刻意用它的 **legacy 构建**并锁在 4.x：6.x 依赖 `Map.prototype.getOrInsertComputed`
+  等很新的引擎 API，老浏览器上会直接打不开（实测踩过），而那个 API **在 worker 线程里也用**，
+  主线程 polyfill 治不了根——legacy 构建自带 core-js polyfill，能覆盖到旧引擎。
+  `frontend/src/tests/pdfjs-compat.test.js` 把这个决定钉住了，升级前先读它的注释。
+  它的 CMap / 标准字体资源由 `npm install` 从 `node_modules` 拷到 `frontend/public/pdfjs/`
+  （1.9 MB，不提交进仓库、不访问 CDN，离线可用）。
+  包体实测：主包 314 kB（gzip 101 kB，与加它之前基本持平），pdf.js 与原版面是**懒加载**的
+  独立 chunk 384 kB（gzip 116 kB）+ worker 1.4 MB，只有真的打开「原版」阅读面才下载。
 - 使用的开源组件与许可证清单见 `docs/后端设计文档.md` 第 2、7 节（FastAPI、Uvicorn、PyMuPDF、pydantic、httpx、python-dotenv、pytest 等）。
 
 详细设计见 `docs/产品设计文档.md`、`docs/后端设计文档.md`、`docs/下一阶段开发文档.md`
