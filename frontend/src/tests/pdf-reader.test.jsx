@@ -139,7 +139,14 @@ const ratioObserver = () => observers.find((item) => Array.isArray(item.options?
 async function renderAllPages() {
   await waitFor(() => expect(document.querySelectorAll('.pdf-page').length).toBe(PAGES));
   pageObservers().forEach((observer) => observer.intersectAll());
-  await waitFor(() => expect(document.querySelector('.pdf-page .textLayer')).toBeTruthy());
+  // 等**span**而不是等 .textLayer 那个容器：容器在 render=true 时就有了，
+  // 而里面的 span 是异步 TextLayer.render() 之后才出现的。只等容器的话，
+  // 测试会在 span 还没生成时就去 selectNodeContents(null) —— 偶发失败，
+  // 且失败得很快（22ms），看着像断言问题其实是个竞态。
+  await waitFor(() => {
+    const layer = document.querySelector('.pdf-page .textLayer');
+    expect(layer?.querySelector('span')).toBeTruthy();
+  });
 }
 
 beforeEach(() => {
