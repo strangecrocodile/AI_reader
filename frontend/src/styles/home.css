@@ -573,6 +573,25 @@
   gap: 12px;
 }
 
+.book-replace {
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  padding: 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.book-replace:hover:not(:disabled) {
+  color: var(--green);
+  background: rgba(0, 102, 204, 0.08);
+}
+
+.book-replace:disabled {
+  opacity: 0.5;
+}
+
 .book-delete {
   flex: none;
   border: 0;
@@ -695,6 +714,15 @@
   display: inline-block;
   margin-top: 4px;
   color: #9a5a00;
+  font-size: 12px;
+  font-style: normal;
+}
+
+/* 「原文件未留存」这类说明：不是告警，用中性色，别和解析受限抢注意力 */
+.choice-hint {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--muted);
   font-size: 12px;
   font-style: normal;
 }

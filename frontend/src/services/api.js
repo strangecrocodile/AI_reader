@@ -101,6 +101,29 @@ export const api = {
   },
 
   /**
+   * 用新文件重新解析并**替换**这本教材的内容，学习记录（进度 / 线程 / 笔记）保留。
+   *
+   * 与「删除后重传」的区别就在这一点上。返回体是教材元信息 + `replace` 计数
+   * （新增/删除的章节、重挂与失锚的线程和笔记）——那些数字要显示给用户，
+   * 不然「记录到底还在不在」只能靠他自己翻。
+   */
+  async replaceBook(bookId, file) {
+    if (!useBackend()) {
+      throw new Error('演示模式不支持替换教材，请先连接 FastAPI 后端');
+    }
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${apiBase}/api/books/${bookId}/replace`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) {
+      throw new Error(await failureDetail(res, `替换失败（${res.status}）`));
+    }
+    return res.json();
+  },
+
+  /**
    * 删除教材及其全部下游数据（章节、段落、锚点、讲解、学习进度、追问线程）。
    *
    * **不可恢复**，也是唯一会丢弃 OCR 结果的操作——扫描件删掉就得重新识别几十分钟。

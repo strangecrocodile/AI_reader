@@ -116,7 +116,11 @@ export default function BookModal({ open, onClose }) {
   const { books, currentBookId, setCurrentBookId, refreshBooks } = useBooks();
   const toast = useToast();
   const inputRef = useRef(null);
+  const replaceInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  // 正在等着选文件的那本书（点「替换」→ 文件选择框 → 选中后才知道换哪本）
+  const [replaceTarget, setReplaceTarget] = useState(null);
   const [notice, setNotice] = useState(null);
   // null 表示「还不知道」：按默认（不支持 .doc）处理，探测回来再放开
   const [legacyDoc, setLegacyDoc] = useState(null);
@@ -385,6 +389,50 @@ export default function BookModal({ open, onClose }) {
    *  而且这个弹窗同一时刻只跟得住一个任务。 */
   const ocrRunning = Boolean(taskId);
 
+  /**
+   * 换掉某本教材的**内容**（章节、段落、原文件），学习记录保留。
+   *
+   * 为什么需要它：老教材入库时还没有留存原文件，原版 PDF 阅读面因此打不开；
+   * 而「删了重传」会连学习进度、追问线程和笔记一起清零。这条路径专治这一件事，
+   * 所以**不能**跟删除混成一个按钮——两者对用户数据的后果完全相反。
+   */
+  const replace = async (book, file) => {
+    if (!file) return;
+    const name = bookTitleOf(book);
+    const ok = window.confirm(
+      `用新文件替换《${name}》的内容？\n\n` +
+        `章节与原文会按新文件重新解析，学习进度、追问线程与笔记会保留` +
+        `（引用原文的锚点会重新挂接，挂不上的会标注出来）。\n` +
+        `原文件与抽出的插图会被覆盖，无法恢复。`,
+    );
+    if (!ok) return;
+    setReplacing(true);
+    try {
+      const saved = await api.replaceBook(book.id, file);
+      const list = await refreshBooks();
+      const fresh = list.find((item) => item.id === book.id) ?? saved;
+      setCurrentBookId(book.id);
+      const kept = saved.replace ?? {};
+      toast(
+        `《${fresh.title || name}》已替换：${fresh.chapters.length} 章` +
+          `（新增 ${kept.chaptersAdded ?? 0} 章）` +
+          `，保留线程 ${kept.threadsReanchored ?? 0} 条、笔记 ${kept.notesReanchored ?? 0} 条`,
+      );
+      if (fresh.contentWarning) {
+        setNotice({
+          heading: `《${fresh.title || name}》已替换，但内容可能没被完整读取`,
+          text: fresh.contentWarning,
+          tip: WARNING_TIP,
+          action: '知道了，先这样看',
+        });
+      }
+    } catch (error) {
+      toast(error.message || '替换教材失败');
+    } finally {
+      setReplacing(false);
+    }
+  };
+
   return (
     <div className="modal open" role="dialog" aria-modal="true" aria-label="选择学习材料" onClick={close}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
@@ -441,11 +489,30 @@ export default function BookModal({ open, onClose }) {
                   </small>
                   {/* 提示随教材一起存库，重开弹窗仍然看得到，不用凭记忆回想 */}
                   {book.contentWarning ? <em className="choice-warning">⚠ 内容可能没读全</em> : null}
+                  {/* 没有留存原文件的老书：说清「重新上传就能看到原版」，
+                      否则用户只会觉得「这本怎么和别的不一样」 */}
+                  {book.hasSource === false ? (
+                    <em className="choice-hint">原文件未留存 · 用「替换」重传即可看原版</em>
+                  ) : null}
                 </span>
                 <span>{book.id === currentBookId ? '当前' : '→'}</span>
               </button>
               {/* 删除按钮只能当兄弟节点，不能塞进上面那个按钮里：button 套 button 是
                   非法 HTML，浏览器会把内层甩到外层之外，点击区域随即错位。 */}
+              {/* 「替换」与「删除」并列而不是合并：一个保住学习记录、一个全部清零，
+                  后果完全相反，混成一个按钮迟早点错。 */}
+              <button
+                type="button"
+                className="book-replace"
+                aria-label={`替换《${book.title}》的内容`}
+                disabled={replacing}
+                onClick={() => {
+                  setReplaceTarget(book);
+                  replaceInputRef.current?.click();
+                }}
+              >
+                替换
+              </button>
               <button
                 type="button"
                 className="book-delete"
@@ -463,6 +530,21 @@ export default function BookModal({ open, onClose }) {
             accept={accept}
             onChange={upload}
             aria-label="选择教材文件"
+          />
+          {/* 替换用的文件选择框：与上传分开，选中后才知道要换哪一本 */}
+          <input
+            ref={replaceInputRef}
+            className="upload-input"
+            type="file"
+            accept={accept}
+            aria-label="选择用于替换的教材文件"
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              // 清空 value：同一个文件连选两次也要能触发 change
+              event.target.value = '';
+              if (replaceTarget) replace(replaceTarget, file);
+              setReplaceTarget(null);
+            }}
           />
           <button
             className="upload"
