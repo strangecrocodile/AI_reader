@@ -143,6 +143,22 @@
   flex: 1;
 }
 
+/* 底部提示文案（原来是浮在底部的深色气泡，现在并进这条信息带） */
+.pdf-bar .pdf-hint {
+  color: #86868b;
+  font-size: 12px;
+}
+
+/* 原版视图的底部留白交给页面列表：`.reader` 那 78px 下内边距会限制 sticky 能贴到的
+   位置（实测把页码栏卡在离底边 78px 处），挪到列表上之后这条栏才是真的贴在底边。 */
+.pdf-reader {
+  padding-bottom: 0;
+}
+
+.pdf-reader .pdf-pages {
+  padding-bottom: 78px;
+}
+
 .pdf-bar .pdf-zoom {
   min-width: 52px;
   text-align: center;

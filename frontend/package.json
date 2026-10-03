@@ -8,6 +8,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "pdfjs:assets": "node scripts/copy-pdfjs-assets.mjs",
+    "probe:layout": "node scripts/probe-layout.mjs",
     "postinstall": "node scripts/copy-pdfjs-assets.mjs",
     "prebuild": "node scripts/copy-pdfjs-assets.mjs"
   },

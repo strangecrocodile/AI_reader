@@ -1,8 +1,11 @@
 /* ---------- 学习页布局 ---------- */
-/* 学习页没有顶部导航（见 App.jsx），所以高度是整屏，不再减去导航栏那一截 */
+/* 学习页没有顶部导航（见 App.jsx），所以高度是整屏。
+   用 dvh 而不是 vh：手机浏览器的地址栏会吃掉 `100vh` 里那一截，底部那条页码栏
+   会被顶到看不见的地方（桌面浏览器两者相同，回退的 100vh 兜住老浏览器）。 */
 .study {
   padding: 0;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   display: block;
   background: #f5f5f7;
@@ -12,6 +15,13 @@
   height: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+  /* 行高必须由容器定，**不能被内容撑开**（minmax(0,1fr) 而不是默认的 auto）。
+     默认 auto 时这一行取「所有网格项 min-content 高度」的最大值：右栏讲解卡片撑到
+     1301px、而 `.study` 只有 802px，于是左栏（`.reader-column { height: 100% }`）
+     跟着变成 1301px，`.reader` 底部连同它的 sticky 页码栏一起被推到视口下方 500px
+     ——实测页码栏落在 y=1171，`barVisible: false`。行高定死之后，右栏由
+     `.coach-scroll { overflow: auto }` 自己滚（那本来就是它的设计），左栏拿到正确高度。 */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 /* 左栏外框：承担滚动，阅读面（原版 PDF / 结构化）与阅读面切换按钮都在里面。
@@ -21,6 +31,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   overflow: hidden;
 }
@@ -116,14 +127,19 @@
   line-height: 1.9;
   letter-spacing: 0;
   outline: none;
+  /* 纵向排列，好让页脚用 margin-top:auto 贴到纸的底部（见 .paper .page-num） */
+  display: flex;
+  flex-direction: column;
 }
 
 .paper .page-num {
   text-align: center;
   color: #86868b;
   font: 12px var(--font-mono);
-  /* 页脚位置：正文之后留一段白，像纸的页脚 */
-  margin: 44px 0 0;
+  /* 页脚位置：`margin-top: auto` 把它推到卡片底部（分页模式下正文被裁短时，
+     页码不该浮在卡片中间）；padding 给正文与页码之间留出呼吸。 */
+  margin: auto 0 0;
+  padding-top: 44px;
 }
 
 .paper h2 {
@@ -532,6 +548,8 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* min-height: 0 同理：不然讲解卡片的最小高度会把网格行顶开（见 .study-layout） */
+  min-height: 0;
   backdrop-filter: blur(18px);
 }
 
@@ -653,16 +671,24 @@
   border-radius: var(--radius);
   background: rgba(118, 118, 128, 0.1);
   font-size: 14px;
+  /* 工具变多之后（讲解 / 大纲 / 追问 / 翻译 / 总结），窄栏里一行放不下：
+     5 个标签按 14px 正文宽算约 342px，而右栏在 360px 宽时只有 312px 可用——
+     最后一个「总结」会被挤出可视区（实测症状：只有把页面缩到 80%、右栏变宽才看得见）。
+     这里允许换行，让标签永远不被裁掉；`min-width: max-content` 保证宁可换行也不截字。 */
+  flex-wrap: wrap;
 }
 
 .tab {
-  flex: 1;
+  /* 能均分就均分，放不下时按内容收缩（配合 max-content 下限），最后才换行 */
+  flex: 1 1 auto;
+  min-width: max-content;
   min-height: 36px;
   border: 0;
   border-radius: 6px;
   background: none;
   padding: 0 10px;
   color: var(--muted);
+  font-size: 13px;
 }
 
 .tab.active {
@@ -1463,6 +1489,8 @@
   .study-layout {
     min-height: 100vh;
     grid-template-columns: 1fr;
+    /* 窄屏下改回「内容多高就多高」：整页滚动，行高定死反而会把内容裁掉 */
+    grid-template-rows: auto;
   }
 
   .reader {

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -125,5 +127,54 @@ describe('页码在组件底部', () => {
     } finally {
       delete globalThis.IntersectionObserver;
     }
+  });
+});
+
+/**
+ * 布局不变量（读 CSS 断言，因为 jsdom 没有排版引擎）。
+ *
+ * 这里钉的是一次**实测出来的**故障：右栏讲解卡片把网格行撑到 1301px，而视口只有
+ * 802px，于是左栏（`height: 100%`）跟着变成 1301px，`.reader` 底部连同吸附在它底部
+ * 的页码栏被推到视口下方——页码栏落在 y=1171，用 Chrome 量出来 `barVisible: false`，
+ * 表现就是「只有在 80% 缩放下才能看见」。
+ *
+ * 这仓库里已有读文件断言的先例（`spatial-backdrop.test.jsx` 断言 three.js 不在依赖里），
+ * 这条同理：它防的是「有人顺手把 grid-template-rows 删掉」。改动前请先用真浏览器量一次。
+ */
+describe('布局不变量', () => {
+  // 直接读源文件（项目根就是 vitest 的工作目录）。`?raw` 导入在这个配置下对 CSS
+  // 返回空串，所以走 fs——这类「读样式断言」的测试本来就与排版引擎无关。
+  // 注释先剥掉：块注释里也会出现 `}`（比如写着 `{ overflow: auto }`），
+  // 不去掉的话「取到第一个 `}`」会提前截断，断言的其实是半句话。
+  const read = (name) =>
+    readFileSync(join(process.cwd(), 'src/styles', name), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const studyCss = read('study.css');
+  const pdfCss = read('pdf.css');
+
+  /** 取某个选择器的声明块（这些选择器在各自文件里只有一个声明块）。 */
+  function blockOf(selector) {
+    const css = selector.startsWith('.pdf') ? pdfCss : studyCss;
+    const at = css.indexOf(`${selector} {`);
+    expect(at, `样式里找不到规则 ${selector}`).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf('}', at));
+  }
+
+  it('网格行高由容器定死，不会被右栏内容撑开', () => {
+    const block = blockOf('.study-layout');
+    expect(block).toMatch(/height:\s*100%/);
+    expect(block).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+  });
+
+  it('两栏都允许收缩（min-height: 0），否则内容高度会顶开行高', () => {
+    expect(blockOf('.reader-column')).toMatch(/min-height:\s*0/);
+    expect(blockOf('.coach')).toMatch(/min-height:\s*0/);
+  });
+
+  it('页码栏贴底：sticky bottom: 0，且阅读区不为它留出下内边距', () => {
+    expect(blockOf('.pdf-bar')).toMatch(/position:\s*sticky/);
+    expect(blockOf('.pdf-bar')).toMatch(/bottom:\s*0/);
+    // `.reader` 的 78px 下内边距会限制 sticky 能贴到哪（实测卡在离底边 78px 处）
+    expect(blockOf('.pdf-reader')).toMatch(/padding-bottom:\s*0/);
+    expect(blockOf('.pdf-reader .pdf-pages')).toMatch(/padding-bottom:\s*78px/);
   });
 });

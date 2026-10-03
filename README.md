@@ -191,6 +191,7 @@ pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测�
 | 前端测试监听模式 | `npm run test:watch` |
 | 构建前端产物 | `npm run build` |
 | 重拷 pdf.js 运行时资源 | `npm run pdfjs:assets`（`npm install` 会自动跑；CMap 缺失时中文 PDF 文字层会是空的） |
+| 量页面布局（真浏览器） | `npm run probe:layout -- http://localhost:3000/study/<书>/<章> 1600 900 15000 out.png`（需先起前后端；改布局前后各跑一次对比，别凭感觉调像素） |
 | 生成样例教材（Word） | `.venv\Scripts\python.exe scripts\make_sample_book.py`（在 `tools\kb-agent`） |
 | 跑 kb-agent 全流程 | `$env:PYTHONPATH='src'; .venv\Scripts\python.exe -m kb_agent.agent <书.docx> --workdir data\out` |
 
@@ -303,6 +304,20 @@ pytest 临时目录里的 `Settings`，并用一个会话级夹具在整场测�
 短章一次调用、边生成边出字；长章会分块（每块约 8 段 / 4000 字，上限 12 块）再合并，
 面板上显示「正在生成…（第 3/9 部分）」，随时可以点「停止」。章总结生成后会缓存，
 **重开这一章直接读回**，不再花模型调用；换教材内容或删掉教材时缓存自动作废。
+
+**改了布局，怎么看有没有把东西挤出屏幕？**
+别靠眼睛，也别靠单元测试——jsdom 没有排版引擎，量不到「元素在不在视口里」。
+用真浏览器量一次：
+
+```powershell
+cd frontend
+npm run probe:layout -- http://localhost:3000/study/<书id>/<章id> 1600 900 15000 out.png
+```
+
+它打出一段 JSON（视口、阅读区高度、页码栏位置与 `barVisible`、纸的页脚是不是最后一个
+元素…）并截一张图。**改动前后各跑一次对比**。这条工具的由来是一次实测出来的故障：
+右栏讲解卡片把网格行撑到 1301px，而视口只有 802px，页码栏落在 `y=1171`——看着像
+「sticky 没生效」，其实是行高被内容顶开了（见 `styles/study.css` 里 `.study-layout` 的注释）。
 
 **「替换」和「删除」有什么区别？**
 「替换」用新文件重新解析**内容**，学习进度、追问线程、笔记与掌握度**全部保留**（引用原文

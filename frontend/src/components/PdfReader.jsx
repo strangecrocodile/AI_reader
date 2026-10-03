@@ -369,8 +369,13 @@ export default function PdfReader({
       </div>
 
       {/* 页码与翻页放在**最下面**：读书时眼睛在页面底部，页码就该在那儿，
-          和纸质书的页脚一样；顶部留出来只放「去哪儿」的工具。 */}
-      <div className="pdf-bar">
+          和纸质书的页脚一样；顶部留出来只放「去哪儿」的工具。
+          原来这里另有一个浮在底部的深色提示气泡（`.reader-tip`），两个都贴底会叠在
+          一起盖住原文，所以提示并入这一条：底部只留一条信息带。 */}
+      <div
+        className="pdf-bar"
+        title={single ? '分页模式：用「上一页 / 下一页」或 ← → 方向键翻页' : '用鼠标左键拖选原文，即可对选中内容提问'}
+      >
         <button type="button" onClick={() => goToPage(current - 1)} disabled={current <= 1}>
           ← 上一页
         </button>
@@ -395,6 +400,9 @@ export default function PdfReader({
           下一页 →
         </button>
         <span className="pdf-spacer" />
+        <span className="pdf-hint">
+          {single ? '分页模式 · ← → 翻页' : '拖选原文可提问'}
+        </span>
         {lastPage ? (
           <span title="本章在原书里覆盖的页范围">
             本章第 {content.page}–{content.pageEnd} 页
@@ -417,12 +425,6 @@ export default function PdfReader({
         >
           ＋
         </button>
-      </div>
-
-      <div className="reader-tip">
-        {single
-          ? '分页模式：一次一页，用「上一页 / 下一页」或 ← → 方向键翻页'
-          : '原版页面：拖动滚动，用鼠标左键拖选原文即可对选中内容提问'}
       </div>
     </article>
   );
