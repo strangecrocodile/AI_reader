@@ -104,9 +104,16 @@ class FakeObserver {
 }
 
 let book = BOOK;
+/** 演示数据的章节内容里没有来源字段：用来区分「没连后端」与「格式不支持」。 */
+let omitSourceFields = false;
 
 /** 章节内容里的来源信息与书架保持一致——真实后端就是这么下发的。 */
-const contentOf = () => ({ ...CONTENT, hasSource: book.hasSource, sourceFormat: book.sourceFormat });
+const contentOf = () => {
+  const base = { ...CONTENT, hasSource: book.hasSource, sourceFormat: book.sourceFormat };
+  if (!omitSourceFields) return base;
+  const { hasSource, sourceFormat, ...rest } = base;
+  return rest;
+};
 
 function mockFetch() {
   return vi.fn(async (url) => {
@@ -130,6 +137,7 @@ function mockFetch() {
 beforeEach(() => {
   localStorage.clear();
   book = BOOK;
+  omitSourceFields = false;
   globalThis.IntersectionObserver = FakeObserver;
   configureApiBase('http://backend.test');
   vi.stubGlobal('fetch', mockFetch());
@@ -197,7 +205,7 @@ describe('阅读面：默认原版，退路说清楚', () => {
 
     expect(document.querySelector('.paper')).toBeTruthy();
     expect(screen.getByText(/没有留存原文件/)).toBeInTheDocument();
-    expect(screen.getByText(/重新上传一次即可看到原版页面/)).toBeInTheDocument();
+    expect(screen.getByText(/用「更换教材」里的「替换」重传一次/)).toBeInTheDocument();
     // 原版按钮置灰：不是「点了没反应」，而是明确告诉用户这条路的条件
     expect(screen.getByRole('button', { name: '原版' })).toBeDisabled();
   });
@@ -209,5 +217,16 @@ describe('阅读面：默认原版，退路说清楚', () => {
 
     expect(document.querySelector('.paper')).toBeTruthy();
     expect(screen.getByText(/只有 PDF 有/)).toBeInTheDocument();
+  });
+
+  it('演示数据没有来源字段时，提示指向「没连后端」而不是「格式不支持」', async () => {
+    // 内置演示数据的章节内容里根本没有 hasSource / sourceFormat，
+    // 与「Word 来源」「老教材」都不是一回事，提示也不该混成一句
+    omitSourceFields = true;
+    renderStudy();
+    await waitForReader();
+
+    expect(screen.getByText(/内置演示数据/)).toBeInTheDocument();
+    expect(screen.queryByText(/只有 PDF 有/)).toBeNull();
   });
 });

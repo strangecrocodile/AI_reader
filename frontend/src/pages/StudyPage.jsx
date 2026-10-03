@@ -47,6 +47,22 @@ function nextMessageId(role) {
 
 const TITLE_CHARS = 24;
 
+/**
+ * 没有原版页面时，按**具体原因**给一句话。
+ *
+ * 三种情况的原因完全不同，含糊其辞会让用户做出错误的下一步：老教材要「重传一次」，
+ * 演示数据要「连上后端」，Word/txt 则压根没有 PDF 可言。宁可不显示，也不说错。
+ */
+function noPdfReason(content) {
+  if (content.hasSource === false) {
+    return '这本教材没有留存原文件（早于该功能上线时导入），所以只有结构化视图；用「更换教材」里的「替换」重传一次即可看到原版页面。';
+  }
+  if (!content.sourceFormat) {
+    return '当前是内置演示数据（没有连接后端），所以没有原版页面；连接 FastAPI 后端并导入 PDF 后即可看到原书版式。';
+  }
+  return '这个来源格式没有原版页面可看（只有 PDF 有），用的是解析出来的结构化视图。';
+}
+
 /** 无选中原文的线程：标题取第一个问题（与后端 services/threads.py 的规则一致）。 */
 function threadTitleFrom(thread, question) {
   if (thread.selectedText) return thread.title;
@@ -620,13 +636,7 @@ export default function StudyPage() {
               原版 PDF 打不开（{pdfError}），已切回结构化视图。下面这份原文是解析出来的文本。
             </p>
           ) : null}
-          {!canUsePdf && !pdfError ? (
-            <p className="pdf-note">
-              {content.hasSource === false
-                ? '这本教材没有留存原文件（早于该功能上线时导入），所以只有结构化视图；重新上传一次即可看到原版页面。'
-                : '这个来源格式没有原版页面可看（只有 PDF 有），用的是解析出来的结构化视图。'}
-            </p>
-          ) : null}
+          {!canUsePdf && !pdfError ? <p className="pdf-note">{noPdfReason(content)}</p> : null}
           {showPdf ? (
             <Suspense fallback={<p className="loading-note">正在打开原版页面…</p>}>
               <PdfReader
