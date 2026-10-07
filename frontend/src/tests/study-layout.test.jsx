@@ -70,6 +70,32 @@ describe('学习页不显示顶部导航', () => {
   });
 });
 
+describe('顶栏只放真能用的东西', () => {
+  /**
+   * 这里防的是一次实测出来的观感问题：顶栏右侧原本挂着一个写死的头像「zhang」，
+   * 它点不动、也不指向任何东西——用户第一反应是「这个是不是坏了」，而不是「这是个占位」。
+   * 一个不能用的控件比没有控件更糟，所以就删了。真做用户体系时再按需加回来。
+   */
+  it('顶栏里没有写死的占位头像', async () => {
+    renderApp('/');
+    await screen.findByText('正在学习的教材');
+
+    const bar = screen.getByRole('banner');
+    expect(bar).not.toHaveTextContent('zhang');
+  });
+
+  it('顶栏的每一项都能用：文字要么是链接，要么是标注了「即将上线」的禁用项', async () => {
+    renderApp('/');
+    await screen.findByText('正在学习的教材');
+
+    const bar = screen.getByRole('banner');
+    // 「学习报告」是唯一的故意禁用项，它自带 title 说明为什么点不动
+    const disabled = bar.querySelectorAll('[aria-disabled="true"]');
+    expect(disabled).toHaveLength(1);
+    expect(disabled[0]).toHaveAttribute('title');
+  });
+});
+
 describe('页码在组件底部', () => {
   it('结构化视图：页码是纸的最后一元素（正文之后），不再是标题上方', async () => {
     renderApp('/study/calc7/ch2');

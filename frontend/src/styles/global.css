@@ -86,6 +86,8 @@ select:focus-visible,
 .topbar {
   min-height: 72px;
   display: grid;
+  /* 左品牌 / 中导航 / 右留白。第三列是**空的**，但它撑着导航居中——顶栏原有的
+     用户头像是个写死的「zhang」摆设（点不动、也无处可去），已删掉；这条轨道要留着。 */
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 24px;
@@ -180,20 +182,6 @@ select:focus-visible,
   border-radius: 999px;
   padding: 1px 6px;
   color: var(--muted);
-}
-
-.avatar {
-  justify-self: end;
-  min-width: 48px;
-  height: 36px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.7);
-  display: grid;
-  place-items: center;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 /* ---------- 页面容器 ---------- */

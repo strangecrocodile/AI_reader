@@ -19,7 +19,6 @@ export default function TopBar() {
           学习报告<em>即将上线</em>
         </span>
       </nav>
-      <div className="avatar">zhang</div>
     </header>
   );
 }
